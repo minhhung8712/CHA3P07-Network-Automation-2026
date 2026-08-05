@@ -12,13 +12,13 @@
           ]
         }
       },
-      "id": "e1000000-0001-0000-0000-000000000001",
+      "id": "7466188f-275a-4281-98a8-768dc7195c89",
       "name": "Every 10s",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        160,
-        340
+        -912,
+        -48
       ]
     },
     {
@@ -26,42 +26,41 @@
         "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/BanIP_Bruteforce.txt",
         "options": {}
       },
-      "id": "e1000000-0002-0000-0000-000000000002",
+      "id": "fd39ca75-24ef-44a7-ae81-bae50203a70d",
       "name": "Read BanIP_Bruteforce",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        360,
-        340
+        -720,
+        -48
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "operation": "text",
-        "binaryPropertyName": "data",
         "options": {}
       },
-      "id": "e1000000-0003-0000-0000-000000000003",
+      "id": "d2539cae-8979-4952-bb4b-c88a6d06f163",
       "name": "Extract Ban Text",
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        560,
-        340
+        -512,
+        -48
       ]
     },
     {
       "parameters": {
         "jsCode": "// ===== Doc BanIP_Bruteforce.txt + loc IP MOI (chua goi Ansible) =====\n// Dung static data (session) de nho IP da xu ly -> khong goi/thong bao trung.\n\nconst content = $('Extract Ban Text').first().json.data || '';\nconst ips = content.split('\\n').map(s => s.trim()).filter(s => s);\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.blocked = staticData.blocked || [];\n\nconst newIps = [];\nfor (const ip of ips) {\n  if (!staticData.blocked.includes(ip)) {\n    staticData.blocked.push(ip);\n    newIps.push(ip);\n  }\n}\n\nif (newIps.length === 0) {\n  return [{ json: { no_new_ip: true } }];\n}\n// Moi IP moi -> 1 item; chuan bi ca payload Ansible lan noi dung Telegram\nreturn newIps.map(ip => ({ json: {\n  ip: ip,\n  reason: 'SSH Brute-force detected by n8n analyzer',\n  attack_type: 'BRUTE_FORCE',\n  // Noi dung canh bao Telegram (kich ban 2 yeu cau bao da kenh)\n  telegram_text: `\\u26A0\\uFE0F CANH BAO BAO MAT\\nPhat hien tan cong SSH Brute-force\\nIP tan cong: ${ip}\\nHanh dong: Da tu dong chan IP qua Ansible`,\n}}));\n"
       },
-      "id": "e1000000-0004-0000-0000-000000000004",
+      "id": "e5e52ff7-0316-4f0a-8404-a1df6fada569",
       "name": "Loc IP Moi (Session)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        760,
-        340
+        -320,
+        -48
       ]
     },
     {
@@ -85,26 +84,27 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "e1000000-0005-0000-0000-000000000005",
+      "id": "cdb7084b-19f8-49bc-9868-1b2ed4f83a0e",
       "name": "Khong co IP moi?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        980,
-        340
+        -96,
+        -48
       ]
     },
     {
       "parameters": {},
-      "id": "e1000000-0006-0000-0000-000000000006",
+      "id": "96bdd873-dda2-4c9c-bc2d-26619442d59d",
       "name": "Dung",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1200,
-        220
+        128,
+        -160
       ]
     },
     {
@@ -129,57 +129,89 @@
         "jsonBody": "={\n  \"ip\": \"{{ $json.ip }}\",\n  \"reason\": \"{{ $json.reason }}\"\n}",
         "options": {}
       },
-      "id": "e1000000-0007-0000-0000-000000000007",
+      "id": "51164ae5-9d9c-497e-8169-b648ce4831e8",
       "name": "Goi Ansible /block-ip",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1200,
-        420
+        128,
+        48
       ],
       "onError": "continueErrorOutput"
     },
     {
       "parameters": {},
-      "id": "e1000000-0008-0000-0000-000000000008",
+      "id": "14bdb900-05ae-444b-ae89-3b6333591d4d",
       "name": "Block OK",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1420,
-        340
+        352,
+        -48
       ]
     },
     {
       "parameters": {},
-      "id": "e1000000-0009-0000-0000-000000000009",
+      "id": "53bc231c-8efb-4d8e-a29c-de060a3126b9",
       "name": "Block Loi",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1420,
-        500
+        352,
+        128
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": "YOUR_TELEGRAM_CHAT_ID",
-        "text": "={{ $('Loc IP Moi (Session)').item.json.telegram_text }}",
-        "additionalFields": {}
+        "chatId": "247349952",
+        "text": "{{ $('Loc IP Moi (Session)').item.json.telegram_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
       },
-      "id": "e1000000-0010-0000-0000-000000000010",
+      "id": "589eddb4-95a8-4c40-bd7c-77db39a243c9",
       "name": "Gui Telegram Canh Bao",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1200,
-        600
+        128,
+        288
       ],
+      "webhookId": "8b9977f4-ad3c-4ee5-8870-7ec99adc3ab1",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      },
       "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "cc43d0dc-5b80-4978-b58e-eee19d085c52",
+              "name": "",
+              "value": "",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        -64,
+        288
+      ],
+      "id": "3e92a3fb-7c15-4da1-913c-2f05d61391de",
+      "name": "Edit Fields",
+      "disabled": true
     }
   ],
+  "pinData": {},
   "connections": {
     "Every 10s": {
       "main": [
@@ -241,7 +273,7 @@
             "index": 0
           },
           {
-            "node": "Gui Telegram Canh Bao",
+            "node": "Edit Fields",
             "type": "main",
             "index": 0
           }
@@ -265,10 +297,29 @@
           }
         ]
       ]
+    },
+    "Edit Fields": {
+      "main": [
+        [
+          {
+            "node": "Gui Telegram Canh Bao",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
-  "pinData": {}
+  "versionId": "c0b9b2bb-3071-4627-bd6a-0e3284e3e077",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "pXojJC3ixU5VYRWQ",
+  "tags": []
 }
