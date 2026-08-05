@@ -1,0 +1,475 @@
+{
+  "name": "WF-DHCP-WATCH — Phat hien thiet bi moi -> Telegram (APPROVE/REJECT)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "201f9721-a691-4d20-a293-d7b0c7b4fbcd",
+      "name": "Every 10s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -2256,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/dhcp.log",
+        "options": {}
+      },
+      "id": "43e52655-a3d9-438d-a517-8decd9220770",
+      "name": "Read dhcp.log",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -2064,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "5ccb5447-7bde-4e26-85df-bef64f7ee102",
+      "name": "Extract DHCP",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1856,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
+        "options": {}
+      },
+      "id": "841782d4-bb17-4e49-a6dc-f25d4d0238c7",
+      "name": "Read Approved",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1664,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "f2fcaf9a-c84b-41e1-a688-e1ce862c2672",
+      "name": "Extract Approved",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1456,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/rejected_macs.txt",
+        "options": {}
+      },
+      "id": "f4b51131-f647-4bc1-95c6-3d7d9d0c55a9",
+      "name": "Read Rejected",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -1264,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "bc6bb330-3d68-4897-8bb0-88f3f2428108",
+      "name": "Extract Rejected",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -1056,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/pending_macs.txt",
+        "options": {}
+      },
+      "id": "a9a59ce5-2fbc-48a9-9759-8cb04b78e017",
+      "name": "Read Pending",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -864,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "e78343bf-d830-433a-ac84-5389ae3638d5",
+      "name": "Extract Pending",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -656,
+        144
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// WF-DHCP-WATCH — PHAT HIEN THIET BI MOI TU DHCP LOG PFSENSE\n// ================================================================\n// Sua loi:\n// - DHCPDISCOVER thuong khong co hostname\n// - Khong danh dau seen ngay tai dong dau tien\n// - Gom tat ca log cua cung mot MAC\n// - Lay hostname bo sung tu DHCPREQUEST / DHCPOFFER / DHCPACK\n// ================================================================\n\n// Doc tat ca item cua node, tranh truong hop Extract DHCP tra nhieu item\nconst readNodeText = (nodeName) => {\n  try {\n    return $(nodeName)\n      .all()\n      .map(item => String(item.json?.data || ''))\n      .filter(Boolean)\n      .join('\\n');\n  } catch (error) {\n    return '';\n  }\n};\n\nconst dhcp        = readNodeText('Extract DHCP');\nconst approvedTxt = readNodeText('Extract Approved');\nconst rejectedTxt = readNodeText('Extract Rejected');\nconst pendingTxt  = readNodeText('Extract Pending');\n\n// ================================================================\n// 1. Tao danh sach MAC da biet\n// ================================================================\n\nconst normalizeMac = (mac) => String(mac || '').trim().toLowerCase();\n\nconst macOf = (line) => {\n  const firstColumn = String(line || '').split(',')[0];\n  return normalizeMac(firstColumn);\n};\n\nconst known = new Set();\n\nfor (const txt of [approvedTxt, rejectedTxt, pendingTxt]) {\n  for (const line of txt.split(/\\r?\\n/)) {\n    const mac = macOf(line);\n\n    if (mac) {\n      known.add(mac);\n    }\n  }\n}\n\n// ================================================================\n// 2. Doc log va gom thong tin theo tung MAC\n// ================================================================\n\nconst RE_MAC = /([0-9a-f]{2}(?::[0-9a-f]{2}){5})/i;\nconst RE_EVENT = /\\b(DHCPDISCOVER|DHCPREQUEST|DHCPOFFER|DHCPACK)\\b/i;\n\nconst devices = new Map();\nconst lines = dhcp.split(/\\r?\\n/);\n\nfor (const raw of lines) {\n  const line = raw.trim();\n\n  if (!line) continue;\n\n  const eventMatch = line.match(RE_EVENT);\n  if (!eventMatch) continue;\n\n  const event = eventMatch[1].toUpperCase();\n\n  const macMatch = line.match(RE_MAC);\n  if (!macMatch) continue;\n\n  const mac = normalizeMac(macMatch[1]);\n\n  if (!devices.has(mac)) {\n    devices.set(mac, {\n      mac,\n      hostname: '',\n      requestSeen: false,\n      events: [],\n      hostnameSource: '',\n    });\n  }\n\n  const device = devices.get(mac);\n\n  // Chi coi la thiet bi dang yeu cau vao mang neu co DISCOVER hoac REQUEST\n  if (event === 'DHCPDISCOVER' || event === 'DHCPREQUEST') {\n    device.requestSeen = true;\n  }\n\n  device.events.push(event);\n\n  // Chi tim dau ngoac nam SAU dia chi MAC\n  // Tranh lay nham cac noi dung ngoac khac trong log\n  const macEndIndex = macMatch.index + macMatch[0].length;\n  const textAfterMac = line.slice(macEndIndex);\n\n  const hostnameMatch = textAfterMac.match(/^\\s*\\(([^)]+)\\)/);\n\n  if (hostnameMatch) {\n    const hostname = hostnameMatch[1].trim();\n\n    // Bo qua mot so gia tri khong phai hostname neu co\n    if (\n      hostname &&\n      hostname.toLowerCase() !== 'found' &&\n      hostname.toLowerCase() !== 'unknown'\n    ) {\n      device.hostname = hostname;\n      device.hostnameSource = event;\n    }\n  }\n}\n\n// ================================================================\n// 3. Chi lay MAC moi, chua tung approved/rejected/pending\n// ================================================================\n\nconst newMacs = [];\n\nfor (const device of devices.values()) {\n  if (!device.requestSeen) continue;\n  if (known.has(device.mac)) continue;\n\n  newMacs.push(device);\n}\n\n// ================================================================\n// 4. Khong co MAC moi\n// ================================================================\n\nif (newMacs.length === 0) {\n  return [\n    {\n      json: {\n        no_new: true,\n        scanned: lines.length,\n        parsed_devices: Array.from(devices.values()),\n      },\n    },\n  ];\n}\n\n// ================================================================\n// 5. Tao payload Telegram\n// ================================================================\n\nreturn newMacs.map(device => {\n  const hostname = device.hostname || '';\n\n  const text =\n    '⚠️ THIẾT BỊ MỚI YÊU CẦU VÀO MẠNG (VLAN2)\\n' +\n    'MAC: ' + device.mac + '\\n' +\n    'Hostname: ' + (hostname || ' ') + '\\n\\n' +\n    'Chọn APPROVE để cấp IP, REJECT để chặn.';\n\n  return {\n    json: {\n      mac: device.mac,\n      hostname,\n\n      hostname_source: device.hostnameSource,\n      dhcp_events: [...new Set(device.events)],\n\n      pending_line:\n        device.mac + ',' + hostname + '\\n',\n\n      telegram_text: text,\n\n      reply_markup: {\n        inline_keyboard: [\n          [\n            {\n              text: '✅ APPROVE',\n              callback_data: 'approve|' + device.mac,\n            },\n            {\n              text: '⛔ REJECT',\n              callback_data: 'reject|' + device.mac,\n            },\n          ],\n        ],\n      },\n    },\n  };\n});"
+      },
+      "id": "05e45d90-92a2-42d4-957b-3a5e40dd3481",
+      "name": "Detect New MAC",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        144
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.no_new }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "e35b6b8c-db94-453b-931e-427cf2f207be"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "f6a3c7d5-aaf9-4399-b12a-11db62b421ea",
+      "name": "Khong co MAC moi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        144
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "df948043-b98a-4ef4-834c-0fb5bcc04ef5",
+      "name": "Dung",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        208,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "pending_line",
+        "options": {}
+      },
+      "id": "30c4255d-7c27-48a7-a291-c39a12dc7bc9",
+      "name": "Pending -> Binary",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        208,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/pending_macs.txt",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "8d4c61f6-d4d3-4398-8430-87c8188c1973",
+      "name": "Ghi pending_macs.txt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        384,
+        208
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<BOT_TOKEN>/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: '<CHAT_ID>', text: $json.telegram_text, reply_markup: $json.reply_markup }) }}",
+        "options": {}
+      },
+      "id": "6643999b-d6ff-42a2-9de5-aa5e539cb3dd",
+      "name": "Gui Telegram (hoi QTV)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        288,
+        992
+      ],
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "chatId": "247349952",
+        "text": "={{ $json.telegram_text }}",
+        "replyMarkup": "inlineKeyboard",
+        "inlineKeyboard": {
+          "rows": [
+            {
+              "row": {
+                "buttons": [
+                  {
+                    "text": "={{ $json.reply_markup.inline_keyboard[0][0].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.reply_markup.inline_keyboard[0][0].callback_data }}"
+                    }
+                  },
+                  {
+                    "text": "={{ $json.reply_markup.inline_keyboard[0][1].text }}",
+                    "additionalFields": {
+                      "callback_data": "={{ $json.reply_markup.inline_keyboard[0][1].callback_data }}"
+                    }
+                  }
+                ]
+              }
+            }
+          ]
+        },
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        192,
+        416
+      ],
+      "id": "db733717-7dbe-4625-afa9-246c3a54289e",
+      "name": "Send a text message",
+      "webhookId": "2b8bdf7e-17a9-4eb0-8b39-af44e640ffe4",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 10s": {
+      "main": [
+        [
+          {
+            "node": "Read dhcp.log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read dhcp.log": {
+      "main": [
+        [
+          {
+            "node": "Extract DHCP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DHCP": {
+      "main": [
+        [
+          {
+            "node": "Read Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approved": {
+      "main": [
+        [
+          {
+            "node": "Extract Approved",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Approved": {
+      "main": [
+        [
+          {
+            "node": "Read Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Rejected": {
+      "main": [
+        [
+          {
+            "node": "Extract Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Rejected": {
+      "main": [
+        [
+          {
+            "node": "Read Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Pending": {
+      "main": [
+        [
+          {
+            "node": "Extract Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Pending": {
+      "main": [
+        [
+          {
+            "node": "Detect New MAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Detect New MAC": {
+      "main": [
+        [
+          {
+            "node": "Khong co MAC moi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Khong co MAC moi?": {
+      "main": [
+        [
+          {
+            "node": "Dung",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pending -> Binary",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pending -> Binary": {
+      "main": [
+        [
+          {
+            "node": "Ghi pending_macs.txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "2e24cf61-81b7-4668-a4d5-49780399c479",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "4raA7oAtN5axjmhQ",
+  "tags": []
+}
