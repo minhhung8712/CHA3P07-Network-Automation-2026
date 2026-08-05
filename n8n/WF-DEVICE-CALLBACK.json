@@ -1,5 +1,5 @@
 {
-  "name": "WF-DEVICE-CALLBACK — Xu ly nut bam -> Ansible + cap nhat file",
+  "name": "WF-DHCP-CALLBACK",
   "nodes": [
     {
       "parameters": {
@@ -8,27 +8,34 @@
         ],
         "additionalFields": {}
       },
-      "id": "c1000000-0001-0000-0000-000000000001",
+      "id": "cf002e30-0883-43a1-8a54-86504183709a",
       "name": "On Button Press",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
       "position": [
-        160,
-        460
+        -960,
+        496
       ],
-      "webhookId": "cb00cb00-cb00-4cb0-8cb0-cb00cb00cb00"
+      "webhookId": "cb00cb00-cb00-4cb0-8cb0-cb00cb00cb00",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      },
+      "disabled": true
     },
     {
       "parameters": {
-        "jsCode": "// Tach callback_data cua nut bam: dinh dang \"approve|<mac>\" / \"reject|<mac>\"\nconst cq = $json.callback_query || {};\nconst data = cq.data || '';\nconst idx = data.indexOf('|');\nconst action = (idx >= 0 ? data.slice(0, idx) : data).toLowerCase();\nconst mac    = (idx >= 0 ? data.slice(idx + 1) : '').toLowerCase();\nreturn [{ json: {\n  action, mac,\n  callback_query_id: cq.id,\n  chat_id: cq.message?.chat?.id,\n  message_id: cq.message?.message_id,\n  by: cq.from?.username || cq.from?.first_name || 'admin'\n}}];\n"
+        "jsCode": "const s = $getWorkflowStaticData('global');\nconst res = $json.result || [];\nif (!res.length) return [];        // <-- khong co gi -> DUNG han, khong chay tiep\n\ns.tg_offset = Math.max(...res.map(u => u.update_id)) + 1;\n\nconst out = [];\nfor (const u of res) {\n  const cq = u.callback_query;\n  if (!cq || !cq.data) continue;\n  const i = cq.data.indexOf('|');\n  const action = (i >= 0 ? cq.data.slice(0, i) : cq.data).trim().toLowerCase();\n  const mac    = (i >= 0 ? cq.data.slice(i + 1) : '').trim().toLowerCase();\n  if (!action || !mac) continue;    // callback la -> bo qua, khong REJECT nham\n  out.push({ json: {\n    action, mac,\n    callback_query_id: cq.id,\n    chat_id: cq.message?.chat?.id,\n    message_id: cq.message?.message_id,\n    by: cq.from?.username || cq.from?.first_name || 'admin'\n  }});\n}\nreturn out;                         // <-- rong cung dung luon\n"
       },
-      "id": "c1000000-0002-0000-0000-000000000002",
+      "id": "d04cfbdd-a7d2-4f55-9e78-67a45c71f0fb",
       "name": "Parse Callback",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        380,
-        460
+        -448,
+        160
       ]
     },
     {
@@ -37,8 +44,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
@@ -47,19 +54,21 @@
               "operator": {
                 "type": "string",
                 "operation": "equals"
-              }
+              },
+              "id": "6bc52bf1-4c46-421c-b77b-84a7797d460c"
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "c1000000-0003-0000-0000-000000000003",
+      "id": "a9db0f1c-eb3f-42df-a502-cbe8714ebdb1",
       "name": "APPROVE?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        600,
-        460
+        -288,
+        160
       ]
     },
     {
@@ -67,29 +76,28 @@
         "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
         "options": {}
       },
-      "id": "c1000000-0010-0000-0000-000000000010",
+      "id": "833e0ccb-e09e-44f2-b4f8-6bacb86e16d4",
       "name": "Read Approved (cb)",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        820,
-        300
+        -96,
+        0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "operation": "text",
-        "binaryPropertyName": "data",
         "options": {}
       },
-      "id": "c1000000-0011-0000-0000-000000000011",
+      "id": "783d6f57-649b-4d72-be85-ca155c38f0bb",
       "name": "Extract Approved (cb)",
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        1020,
-        300
+        112,
+        0
       ],
       "onError": "continueRegularOutput"
     },
@@ -98,76 +106,148 @@
         "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/pending_macs.txt",
         "options": {}
       },
-      "id": "c1000000-0012-0000-0000-000000000012",
+      "id": "d4439fbb-c539-4016-939d-e8d999f22f3f",
       "name": "Read Pending (cb)",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1220,
-        300
+        304,
+        0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "operation": "text",
-        "binaryPropertyName": "data",
         "options": {}
       },
-      "id": "c1000000-0013-0000-0000-000000000013",
+      "id": "080c8bec-2605-49bc-bd21-3c9524160e95",
       "name": "Extract Pending (cb)",
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        1420,
-        300
+        512,
+        0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// APPROVE: chon IP trong dai 192.168.12.11 - 192.168.12.199 (bo cac IP da cap),\n// tra hostname tu pending, chuan bi dong ghi approved_macs.txt + text sua tin nhan.\nconst approvedTxt = $('Extract Approved (cb)').first()?.json?.data || '';\nconst pendingTxt  = $('Extract Pending (cb)').first()?.json?.data || '';\nconst info = $('Parse Callback').first().json;\nconst mac  = info.mac;\n\n// IP da su dung\nconst used = new Set();\nfor (const l of approvedTxt.split('\\n')) {\n  const p = l.split(',');\n  if (p[1] && p[1].trim()) used.add(p[1].trim());\n}\n// chon IP trong dau tien\nlet ip = null;\nfor (let i = 11; i <= 199; i++) {\n  const cand = '192.168.12.' + i;\n  if (!used.has(cand)) { ip = cand; break; }\n}\n// hostname tu pending\nlet hostname = '';\nfor (const l of pendingTxt.split('\\n')) {\n  const p = l.split(',');\n  if ((p[0] || '').trim().toLowerCase() === mac) { hostname = (p[1] || '').trim(); break; }\n}\n\nif (!ip) {\n  return [{ json: { ...info, hostname, ip: null,\n    edit_text: '\\u26A0\\uFE0F KHONG THE APPROVE ' + mac + '\\nHet IP trong trong dai 12.11-12.199.' }}];\n}\nreturn [{ json: {\n  ...info, ip, hostname,\n  approved_line: mac + ',' + ip + ',' + hostname + '\\n',\n  edit_text: '\\u2705 DA APPROVE\\nMAC: ' + mac + '\\nIP: ' + ip +\n             '\\nHostname: ' + (hostname || '(khong ro)') + '\\nBoi: ' + info.by\n}}];\n"
+        "jsCode": "// APPROVE: chon IP trong dai 192.168.12.11 - 192.168.12.199 (bo cac IP da cap),\n// tra hostname tu pending, chuan bi dong ghi approved_macs.txt + text sua tin nhan.\nconst approvedTxt = $('Extract Approved (cb)').first()?.json?.data || '';\nconst pendingTxt  = $('Extract Pending (cb)').first()?.json?.data || '';\nconst info = $('Parse Callback').first().json;\nconst mac  = info.mac;\n\n// IP da su dung\nconst used = new Set();\nfor (const l of approvedTxt.split('\\n')) {\n  const p = l.split(',');\n  if (p[1] && p[1].trim()) used.add(p[1].trim());\n}\n// chon IP trong dau tien\nlet ip = null;\nfor (let i = 11; i <= 199; i++) {\n  const cand = '192.168.12.' + i;\n  if (!used.has(cand)) { ip = cand; break; }\n}\n// hostname tu pending\nlet hostname = '';\nfor (const l of pendingTxt.split('\\n')) {\n  const p = l.split(',');\n  if ((p[0] || '').trim().toLowerCase() === mac) { hostname = (p[1] || '').trim(); break; }\n}\n\nif (!ip) {\n  return [{ json: { ...info, hostname, ip: null,\n    edit_text: '\\u26A0\\uFE0F KHONG THE APPROVE ' + mac + '\\nHet IP trong trong dai 12.11-12.199.' }}];\n}\nreturn [{ json: {\n  ...info, ip, hostname,\n  approved_line: mac + ',' + ip + ',' + hostname + '\\n',\n  edit_text: '\\u2705 APPROVED\\nMAC: ' + mac + '\\nIP: ' + ip +\n             '\\nHostname: ' + (hostname || '') + '\\nAdmin: ' + info.by\n}}];\n"
       },
-      "id": "c1000000-0014-0000-0000-000000000014",
+      "id": "d3d1517f-ee7a-47cf-ba7a-85ecc223d91b",
       "name": "Pick Free IP",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        1620,
-        300
+        912,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// REJECT: chuan bi dong ghi rejected_macs.txt + text sua tin nhan.\nconst info = $('Parse Callback').first().json;\nconst mac = info.mac;\nreturn [{ json: {\n  ...info,\n  reject_line: mac + '\\n',\n  edit_text: '\\u26D4 REJECTED\\nMAC: ' + mac + '\\nThiết bị sẽ bị chặn cấp IP.\\nBoi: ' + info.by\n}}];\n"
+      },
+      "id": "5fa38efc-8c2d-4931-96e9-8107ea26d777",
+      "name": "Build Reject",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        320
       ]
     },
     {
       "parameters": {
         "operation": "toText",
-        "sourceProperty": "approved_line",
+        "sourceProperty": "reject_line",
         "options": {}
       },
-      "id": "c1000000-0015-0000-0000-000000000015",
-      "name": "Approved -> Binary",
+      "id": "698c77b7-aab7-4db9-96fc-7134af820784",
+      "name": "Reject -> Binary",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1820,
-        300
+        112,
+        320
       ]
     },
     {
       "parameters": {
         "operation": "write",
-        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
+        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/rejected_macs.txt",
         "options": {
           "append": true
         }
       },
-      "id": "c1000000-0016-0000-0000-000000000016",
-      "name": "Ghi approved_macs.txt",
+      "id": "1c72d091-905b-4baa-a378-87f4e13a04c1",
+      "name": "Ghi rejected_macs.txt",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        2020,
-        300
+        304,
+        320
       ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        160
+      ],
+      "id": "12bfb3a7-b411-45e5-b6cf-09010788ad95",
+      "name": "Every 10s"
+    },
+    {
+      "parameters": {
+        "jsCode": "const s = $getWorkflowStaticData('global');\ns.tg_offset = s.tg_offset || 0;\nreturn [{ json: { offset: s.tg_offset } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -784,
+        160
+      ],
+      "id": "12870d0f-9a08-431c-8d80-194b84869f8d",
+      "name": "Get Offset"
+    },
+    {
+      "parameters": {
+        "url": "={{ 'https://api.telegram.org/bot8418267935:AAFCy7HAfkJVq4DH6Ncilchjev8AIyqm80o/getUpdates?timeout=0&allowed_updates=%5B%22callback_query%22%5D&offset=' + $json.offset }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -624,
+        160
+      ],
+      "id": "d0e7e8c9-1f18-4085-9fa8-7c53a8e88f2c",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// RESOLVE PENDING DEVICE\n// Tim thong tin MAC + hostname trong pending_macs.txt\n// dua tren MAC nhan duoc tu Telegram callback\n// ================================================================\n\n// Du lieu tu Parse Callback\nconst callback = $('Parse Callback').first()?.json || {};\n\n// Du lieu file pending\nconst pendingTxt =\n  $('Extract Pending (cb)').first()?.json?.data || '';\n\n// ------------------------------------------------\n// Lay action va MAC tu Parse Callback\n// ------------------------------------------------\n\nlet action = String(callback.action || '').trim().toLowerCase();\nlet callbackMac = String(callback.mac || '').trim().toLowerCase();\n\n// Ho tro truong hop Parse Callback chi tra callback_data\nconst callbackData =\n  callback.callback_data ||\n  callback.data ||\n  callback.callback_query?.data ||\n  '';\n\nif ((!action || !callbackMac) && callbackData) {\n  const parts = String(callbackData).split('|');\n\n  action = action || String(parts[0] || '').trim().toLowerCase();\n  callbackMac =\n    callbackMac ||\n    String(parts[1] || '').trim().toLowerCase();\n}\n\n// ------------------------------------------------\n// Chuan hoa MAC\n// ------------------------------------------------\n\nconst normalizeMac = value =>\n  String(value || '')\n    .trim()\n    .toLowerCase();\n\n// Kiem tra MAC\nconst MAC_REGEX =\n  /^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i;\n\ncallbackMac = normalizeMac(callbackMac);\n\nif (!MAC_REGEX.test(callbackMac)) {\n  throw new Error(\n    `MAC callback không hợp lệ: \"${callbackMac}\"`\n  );\n}\n\n// ------------------------------------------------\n// Parse pending_macs.txt\n//\n// Ho tro:\n// mac\n// mac,hostname\n// ------------------------------------------------\n\nconst pendingDevices = pendingTxt\n  .split(/\\r?\\n/)\n  .map(line => line.trim())\n  .filter(Boolean)\n  .map(line => {\n    const columns = line.split(',');\n\n    const mac = normalizeMac(columns.shift());\n    const hostname = columns.join(',').trim();\n\n    return {\n      raw_line: line,\n      mac,\n      hostname,\n    };\n  });\n\n// ------------------------------------------------\n// Tim MAC trong pending\n// ------------------------------------------------\n\nconst device = pendingDevices.find(\n  item => item.mac === callbackMac\n);\n\nif (!device) {\n  throw new Error(\n    `Không tìm thấy MAC ${callbackMac} trong pending_macs.txt`\n  );\n}\n\n// ------------------------------------------------\n// Output cho cac node phia sau\n// ------------------------------------------------\n\nreturn [\n  {\n    json: {\n      ...callback,\n\n      action,\n      mac: device.mac,\n      hostname: device.hostname,\n\n      // Gia tri dung de gui Ansible\n      ansible_mac: device.mac,\n      ansible_hostname: device.hostname,\n\n      // Dong pending goc\n      pending_line: device.raw_line,\n\n      // Debug\n      found_in_pending: true,\n    },\n  },\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        704,
+        0
+      ],
+      "id": "855f8c1b-b98c-4222-bb59-9405116cc28f",
+      "name": "Resolve Pending Device"
     },
     {
       "parameters": {
@@ -188,163 +268,225 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\n  \"mac\": \"{{ $json.mac }}\",\n  \"ip\": \"{{ $json.ip }}\",\n  \"hostname\": \"{{ $json.hostname }}\"\n}",
+        "jsonBody": "={\n  \"client_mac\": \"{{ $('Pick Free IP').first().json.mac }}\",\n  \"ip\": \"{{ $('Pick Free IP').first().json.ip }}\",\n  \"hostname\": \"{{ $('Pick Free IP').first().json.hostname || $('Resolve Pending Device').first().json.hostname || '' }}\"\n}",
         "options": {}
       },
-      "id": "c1000000-0017-0000-0000-000000000017",
+      "id": "e2026e35-0e55-41a8-9bc9-e5273ee39482",
       "name": "Ansible /add-static-mapping",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        2220,
-        300
+        1632,
+        0
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "jsCode": "// REJECT: chuan bi dong ghi rejected_macs.txt + text sua tin nhan.\nconst info = $('Parse Callback').first().json;\nconst mac = info.mac;\nreturn [{ json: {\n  ...info,\n  reject_line: mac + '\\n',\n  edit_text: '\\u26D4 DA REJECT\\nMAC: ' + mac + '\\nThiet bi se bi chan cap IP.\\nBoi: ' + info.by\n}}];\n"
+        "chatId": "247349952",
+        "text": "={{ $('Build Reject').item.json.edit_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
       },
-      "id": "c1000000-0020-0000-0000-000000000020",
-      "name": "Build Reject",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
-        820,
-        620
+        512,
+        320
+      ],
+      "id": "3270b54c-be52-4bfa-b1b0-f6d33167dd09",
+      "name": "Send a text message",
+      "webhookId": "0d3b9f6f-fa03-402b-a194-c501b74b9449",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "247349952",
+        "text": "={{ $json.telegram_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2320,
+        272
+      ],
+      "id": "d3a4ddce-5595-49f7-9b01-cfeda4d80717",
+      "name": "Send a text message1",
+      "webhookId": "a27aa968-068e-4b40-a2fa-e44543b82f12",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "c4a787ee-eff1-4a89-9d0c-ecbb7bf35d01",
+      "name": "Ghi approved_macs.txt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1360,
+        0
       ]
     },
     {
       "parameters": {
         "operation": "toText",
-        "sourceProperty": "reject_line",
+        "sourceProperty": "approved_line",
         "options": {}
       },
-      "id": "c1000000-0021-0000-0000-000000000021",
-      "name": "Reject -> Binary",
+      "id": "84ec9188-3f38-4b9f-9c10-51d8ea5b273b",
+      "name": "Approved -> Binary",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1020,
-        620
+        1136,
+        0
       ]
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/rejected_macs.txt",
-        "options": {
-          "append": true
-        }
+        "amount": 10
       },
-      "id": "c1000000-0022-0000-0000-000000000022",
-      "name": "Ghi rejected_macs.txt",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1632,
+        304
+      ],
+      "id": "aa763721-74c5-4ba6-94cf-c2a616c2e725",
+      "name": "Wait",
+      "webhookId": "01a3ea92-43f4-4949-8b06-d3223ea68010"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.telegram.org/bot<BOT_TOKEN>/sendMessage",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ chat_id: '<CHAT_ID>', text: $json.telegram_text, reply_markup: $json.reply_markup }) }}",
+        "options": {}
+      },
+      "id": "e365c7e6-393c-44b6-a6c1-cbc15d670b1d",
+      "name": "Gui Telegram (hoi QTV)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        1488
+      ],
+      "disabled": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "61d58ecc-6bef-43ce-8fd3-ef88b51bf071",
+      "name": "Extract DHCP (verify)",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        1888,
+        560
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/dhcp.log",
+        "options": {}
+      },
+      "id": "4e3e3f79-136b-467e-b898-2f3f8c05b5d6",
+      "name": "Read dhcp.log (verify)",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1220,
-        620
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "http://192.168.10.3:8000/deny-mac",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "X-API-Token",
-              "value": "n8n-secret-token-123"
-            },
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={\n  \"mac\": \"{{ $json.mac }}\",\n  \"reason\": \"Rejected by admin via Telegram\"\n}",
-        "options": {}
-      },
-      "id": "c1000000-0023-0000-0000-000000000023",
-      "name": "Ansible /deny-mac",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        1420,
-        620
+        1824,
+        304
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.telegram.org/bot<BOT_TOKEN>/answerCallbackQuery",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ callback_query_id: $json.callback_query_id, text: 'Da ghi nhan' }) }}",
-        "options": {}
+        "jsCode": "// ================================================================\n// FIND DHCPACK BY MAC\n// Tim IP thuc te duoc pfSense xac nhan cho MAC vua APPROVE\n// ================================================================\n\nconst log =\n  $('Extract DHCP (verify)').first()?.json?.data || '';\n\nconst device =\n  $('Resolve Pending Device').first()?.json || {};\n\nconst mac = String(device.mac || '')\n  .trim()\n  .toLowerCase();\n\nconst approvalStartedAt =\n  Date.parse(device.approval_started_at || '');\n\nif (!/^[0-9a-f]{2}(?::[0-9a-f]{2}){5}$/i.test(mac)) {\n  throw new Error(`MAC không hợp lệ: \"${mac}\"`);\n}\n\nconst escapedMac = mac.replace(\n  /[.*+?^${}()|[\\]\\\\]/g,\n  '\\\\$&'\n);\n\n// Vi du:\n// DHCPACK on 192.168.12.200 to 00:0c:29:49:fb:b4 (DESKTOP-D24DCNT) via em3\nconst ackRegex = new RegExp(\n  '\\\\bDHCPACK\\\\s+on\\\\s+' +\n  '(\\\\d{1,3}(?:\\\\.\\\\d{1,3}){3})' +\n  '\\\\s+to\\\\s+' +\n  escapedMac +\n  '(?:\\\\s+\\\\(([^)]+)\\\\))?',\n  'i'\n);\n\nconst lines = log.split(/\\r?\\n/);\n\nlet assignedIp = '';\nlet hostname = String(device.hostname || '').trim();\nlet ackLine = '';\nlet ackTimestamp = '';\n\n// Doc tu cuoi log len de lay DHCPACK moi nhat\nfor (let index = lines.length - 1; index >= 0; index--) {\n  const line = lines[index].trim();\n\n  if (!line) continue;\n\n  const match = line.match(ackRegex);\n  if (!match) continue;\n\n  // Neu log co timestamp ISO o dau dong:\n  // 2026-07-26T07:07:03.947623+00:00 ...\n  const timestampMatch = line.match(\n    /^(\\d{4}-\\d{2}-\\d{2}T\\S+)/\n  );\n\n  if (timestampMatch && Number.isFinite(approvalStartedAt)) {\n    const lineTime = Date.parse(timestampMatch[1]);\n\n    // Bo qua DHCPACK cu truoc luc admin bam APPROVE\n    if (\n      Number.isFinite(lineTime) &&\n      lineTime < approvalStartedAt - 2000\n    ) {\n      continue;\n    }\n\n    ackTimestamp = timestampMatch[1];\n  }\n\n  assignedIp = String(match[1] || '').trim();\n\n  if (match[2]) {\n    hostname = String(match[2]).trim();\n  }\n\n  ackLine = line;\n  break;\n}\n\n// Chua thay DHCPACK moi\nif (!assignedIp) {\n  return [\n    {\n      json: {\n        ...device,\n\n        verified: false,\n        mac,\n        hostname,\n\n        telegram_text:\n          '⏳ ĐÃ APPROVE THIẾT BỊ\\n' +\n          'MAC: ' + mac + '\\n' +\n          'Hostname: ' + (hostname || '') + '\\n' +\n          'Admin: ' + (device.by || '') + '\\n\\n' +\n          'Ansible đã xử lý nhưng chưa tìm thấy DHCPACK mới từ pfSense.',\n      },\n    },\n  ];\n}\n\n// Da thay DHCPACK\nreturn [\n  {\n    json: {\n      ...device,\n\n      verified: true,\n\n      mac,\n      ip: assignedIp,\n      hostname,\n\n      dhcp_ack_line: ackLine,\n      dhcp_ack_timestamp: ackTimestamp,\n\n      telegram_text:\n        '✅ APPROVED\\n' +\n        'MAC: ' + mac + '\\n' +\n        'IP: ' + assignedIp + '\\n' +\n        'Hostname: ' + (hostname || '') + '\\n' +\n        'Admin: ' + (device.by || ''),\n    },\n  },\n];"
       },
-      "id": "c1000000-0030-0000-0000-000000000030",
-      "name": "Answer Callback",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
-        2460,
-        460
+        2096,
+        560
       ],
-      "onError": "continueRegularOutput"
+      "id": "3da978e0-ed5f-4b68-b011-0ffdeb8d8357",
+      "name": "Find DHCPACK by MAC"
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "https://api.telegram.org/bot<BOT_TOKEN>/editMessageText",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
             {
-              "name": "Content-Type",
-              "value": "application/json"
+              "id": "fc8e1b7d-acf3-498b-9270-dbe39fae6fcc",
+              "leftValue": "={{ $json.verified }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
             }
-          ]
+          ],
+          "combinator": "and"
         },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chat_id: $json.chat_id, message_id: $json.message_id, text: $json.edit_text, reply_markup: { inline_keyboard: [] } }) }}",
         "options": {}
       },
-      "id": "c1000000-0031-0000-0000-000000000031",
-      "name": "Edit Message (go nut)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
       "position": [
-        2680,
-        460
+        2304,
+        560
       ],
-      "onError": "continueRegularOutput"
+      "id": "2bf60de8-5ea8-421c-940e-0fbf5b7a95b1",
+      "name": "Find DHCPACK by MAC2"
     }
   ],
+  "pinData": {},
   "connections": {
     "On Button Press": {
       "main": [
-        [
-          {
-            "node": "Parse Callback",
-            "type": "main",
-            "index": 0
-          }
-        ]
+        []
       ]
     },
     "Parse Callback": {
@@ -413,7 +555,7 @@
       "main": [
         [
           {
-            "node": "Pick Free IP",
+            "node": "Resolve Pending Device",
             "type": "main",
             "index": 0
           }
@@ -425,39 +567,6 @@
         [
           {
             "node": "Approved -> Binary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Approved -> Binary": {
-      "main": [
-        [
-          {
-            "node": "Ghi approved_macs.txt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ghi approved_macs.txt": {
-      "main": [
-        [
-          {
-            "node": "Ansible /add-static-mapping",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Ansible /add-static-mapping": {
-      "main": [
-        [
-          {
-            "node": "Answer Callback",
             "type": "main",
             "index": 0
           }
@@ -490,29 +599,144 @@
       "main": [
         [
           {
-            "node": "Ansible /deny-mac",
+            "node": "Send a text message",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Ansible /deny-mac": {
+    "Every 10s": {
       "main": [
         [
           {
-            "node": "Answer Callback",
+            "node": "Get Offset",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Answer Callback": {
+    "Get Offset": {
       "main": [
         [
           {
-            "node": "Edit Message (go nut)",
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP Request": {
+      "main": [
+        [
+          {
+            "node": "Parse Callback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resolve Pending Device": {
+      "main": [
+        [
+          {
+            "node": "Pick Free IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ansible /add-static-mapping": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message1": {
+      "main": [
+        []
+      ]
+    },
+    "Approved -> Binary": {
+      "main": [
+        [
+          {
+            "node": "Ghi approved_macs.txt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ghi approved_macs.txt": {
+      "main": [
+        [
+          {
+            "node": "Ansible /add-static-mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Read dhcp.log (verify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract DHCP (verify)": {
+      "main": [
+        [
+          {
+            "node": "Find DHCPACK by MAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read dhcp.log (verify)": {
+      "main": [
+        [
+          {
+            "node": "Extract DHCP (verify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find DHCPACK by MAC": {
+      "main": [
+        [
+          {
+            "node": "Find DHCPACK by MAC2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find DHCPACK by MAC2": {
+      "main": [
+        [
+          {
+            "node": "Send a text message1",
             "type": "main",
             "index": 0
           }
@@ -520,8 +744,16 @@
       ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate"
   },
-  "pinData": {}
+  "versionId": "3e009b06-31ff-4d9c-b76f-7a792066851e",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "zvega5uH5WZqMNg8",
+  "tags": []
 }
