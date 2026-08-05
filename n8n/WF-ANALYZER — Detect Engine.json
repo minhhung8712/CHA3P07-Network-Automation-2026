@@ -12,13 +12,13 @@
           ]
         }
       },
-      "id": "cF000000-0001-4001-8001-000000000001",
+      "id": "45e21722-5c87-4972-b590-d1f2e5883904",
       "name": "Every 10s",
       "type": "n8n-nodes-base.scheduleTrigger",
       "typeVersion": 1.2,
       "position": [
-        160,
-        360
+        0,
+        368
       ]
     },
     {
@@ -26,42 +26,41 @@
         "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/pfsense.log",
         "options": {}
       },
-      "id": "cF000000-0002-4002-8002-000000000002",
+      "id": "82592b7a-6f3e-4d4c-8204-dc04381c1026",
       "name": "Read pfsense.log",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        360,
-        360
+        208,
+        368
       ],
       "onError": "continueRegularOutput"
     },
     {
       "parameters": {
         "operation": "text",
-        "binaryPropertyName": "data",
         "options": {}
       },
-      "id": "cF000000-0003-4003-8003-000000000003",
+      "id": "b789d08e-d397-49f0-bf55-45ff97fa406f",
       "name": "Extract Text",
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        560,
-        360
+        400,
+        368
       ]
     },
     {
       "parameters": {
-        "jsCode": "// ================================================================\n// WF-ANALYZER — thay hoan toan pf_analyzer.py (co SESSION/static data)\n// ================================================================\n// Doc pfsense.log -> engine nguong -> DEDUPE qua static data (nhu _banned\n// cua analyzer) -> tra ve: audit (moi detection) + new_bans (IP MOI ghi file).\n//\n// $getWorkflowStaticData('global') = \"session\" ben vung giua cac lan chay,\n// thay cho bien _banned song suot doi process cua analyzer.py.\n\nconst content = $('Extract Text').first().json.data || '';\nconst rawLines = content.split('\\n').filter(l => l.trim());\n\nconst INTERNAL_NETS = ['192.168.10.','192.168.11.','192.168.12.','192.168.20.'];\nconst IGNORE_PREFIXES = ['169.254.','224.','239.','255.','0.','127.'];\nconst IGNORE_EXACT = ['192.168.183.1','192.168.10.1'];\nconst THRESHOLDS = {\n  BRUTE_FORCE:{count:5,window:60}, PORT_SCAN:{distinctPorts:15,window:10},\n  CONN_FLOOD:{count:100,window:10}, DDOS_SPREAD:{distinctIps:20,window:10},\n};\nconst isInternal = ip => ip && INTERNAL_NETS.some(n=>ip.startsWith(n));\nconst shouldIgnore = ip => !ip || IGNORE_EXACT.includes(ip) || IGNORE_PREFIXES.some(p=>ip.startsWith(p));\nconst pickAttacker = (s,d) => (s&&!isInternal(s))?s:((d&&!isInternal(d))?d:(s||d));\n\nconst RE_ANY_IP=/\\b(\\d{1,3}(?:\\.\\d{1,3}){3})\\b/g;\nconst RE_TCP=/,tcp,\\d+,(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d+),(\\d+),[^,]*,([A-Z]*)/;\nconst RE_SSH=/Failed password for (?:invalid user )?(\\S+) from (\\d{1,3}(?:\\.\\d{1,3}){3}) port (\\d+)/;\n\nfunction extractSignal(raw){\n  const low=raw.toLowerCase();\n  const a=raw.match(RE_SSH);\n  if(a){const ip=a[2]; if(shouldIgnore(ip)||isInternal(ip))return null; return {kind:'auth_fail',src_ip:ip,dst_port:22};}\n  if(low.includes('filterlog')&&(low.includes(',block,')||low.includes(',pass,'))){\n    const ips=[...raw.matchAll(RE_ANY_IP)].map(m=>m[1]);\n    if(ips.length<2)return null;\n    const att=pickAttacker(ips[0],ips[1]);\n    if(isInternal(att)||shouldIgnore(att))return null;\n    const t=raw.match(RE_TCP); let dp=null,fl=null;\n    if(t){dp=parseInt(t[4],10);fl=t[5];}\n    return {kind:fl==='S'?'syn':'fw_block',src_ip:att,dst_port:dp};\n  }\n  return null;\n}\nconst nowFrom=l=>{const tb=l.indexOf('\\t'); if(tb<0)return Date.now()/1000; const t=Date.parse(l.slice(0,tb)); return isNaN(t)?Date.now()/1000:t/1000;};\n\n// Gom event theo IP\nconst events={};\nfor(const line of rawLines){\n  const tb=line.indexOf('\\t'); const raw=tb>=0?line.slice(tb+1):line; const now=nowFrom(line);\n  const sig=extractSignal(raw); if(!sig)continue;\n  (events[sig.src_ip]=events[sig.src_ip]||[]).push({ts:now,port:sig.dst_port,kind:sig.kind});\n}\nconst nowMax=rawLines.length?nowFrom(rawLines[rawLines.length-1]):Date.now()/1000;\nconst cntW=(l,w,k,p)=>l.filter(e=>(nowMax-e.ts)<=w&&(!k||e.kind===k)&&(p===undefined||e.port===p)).length;\nconst dportsW=(l,w,k)=>{const s=new Set();l.forEach(e=>{if((nowMax-e.ts)<=w&&(!k||e.kind===k)&&e.port!=null)s.add(e.port);});return s.size;};\n\n// Xet nguong\nconst detections=[];\nfor(const ip of Object.keys(events)){\n  const l=events[ip]; let f=null;\n  const af=l.filter(e=>e.kind==='auth_fail');\n  if(af.length){const bp={};af.forEach(e=>bp[e.port]=(bp[e.port]||0)+1);\n    for(const p of Object.keys(bp)){const c=cntW(l,THRESHOLDS.BRUTE_FORCE.window,'auth_fail',Number(p));if(c>=THRESHOLDS.BRUTE_FORCE.count){f={type:'BRUTE_FORCE',metric:c};break;}}}\n  if(!f){const t=cntW(l,THRESHOLDS.CONN_FLOOD.window);if(t>=THRESHOLDS.CONN_FLOOD.count)f={type:'CONN_FLOOD',metric:t};}\n  if(!f){const d=dportsW(l,THRESHOLDS.PORT_SCAN.window,'fw_block');if(d>=THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'PORT_SCAN',metric:d};}\n  if(!f){const d=dportsW(l,THRESHOLDS.PORT_SCAN.window,'syn');if(d>=THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'PORT_SCAN',metric:d};}\n  if(f)detections.push({src_ip:ip,event_type:f.type,metric:f.metric});\n}\n\n// ===== DEDUPE qua SESSION (static data) — phan cot loi giong _banned =====\nconst staticData = $getWorkflowStaticData('global');\nstaticData.banned = staticData.banned || {PORT_SCAN:[],BRUTE_FORCE:[],CONN_FLOOD:[]};\n\nconst BAN_MAP={PORT_SCAN:'BanIP_Scanport.txt',BRUTE_FORCE:'BanIP_Bruteforce.txt',CONN_FLOOD:'BanIP_DDOS.txt'};\nconst newBans=[];\nfor(const d of detections){\n  const list = staticData.banned[d.event_type] || (staticData.banned[d.event_type]=[]);\n  if(!list.includes(d.src_ip)){            // chi ghi IP CHUA tung ban\n    list.push(d.src_ip);\n    newBans.push({...d, ban_file:BAN_MAP[d.event_type]});\n  }\n}\n\n// ===== Gom theo file de ghi (moi loai 1 item, gom cac IP moi) =====\nconst byFile={};\nfor(const b of newBans){\n  (byFile[b.ban_file]=byFile[b.ban_file]||[]).push(b);\n}\n\nconst out=[];\nfor(const file of Object.keys(byFile)){\n  const items=byFile[file];\n  out.push({ json:{\n    ban_file: file,\n    ips: items.map(i=>i.src_ip),\n    // noi dung ghi vao file ban (moi IP 1 dong)\n    ban_content: items.map(i=>i.src_ip).join('\\n') + '\\n',\n    // noi dung audit (JSON tung dong) ghi vao analyzer_events.log\n    audit_content: items.map(i=>JSON.stringify({\n      ts:new Date().toISOString(), src_ip:i.src_ip,\n      event_type:i.event_type, metric:i.metric\n    })).join('\\n') + '\\n',\n    count: items.length,\n  }});\n}\n\n// Neu khong co ban moi -> tra ve item danh dau (de nhanh IF loc bo)\nif(out.length===0){\n  return [{ json:{ no_new_ban:true, scanned:rawLines.length,\n                   total_detections:detections.length } }];\n}\nreturn out;\n"
+        "jsCode": "// ================================================================\n// WF-ANALYZER — thay hoan toan pf_analyzer.py (co SESSION/static data)\n// ================================================================\n// Doc pfsense.log -> engine nguong -> DEDUPE qua static data (nhu _banned).\n// $getWorkflowStaticData('global') = \"session\" ben vung giua cac lan chay.\n\nconst content = $('Extract Text').first().json.data || '';\nconst rawLines = content.split('\\n').filter(l => l.trim());\n\nconst INTERNAL_NETS = ['192.168.10.','192.168.11.','192.168.12.','192.168.20.'];\nconst IGNORE_PREFIXES = ['169.254.','224.','239.','255.','0.','127.'];\nconst IGNORE_EXACT = ['192.168.183.1','192.168.10.1'];\nconst THRESHOLDS = {\n  BRUTE_FORCE:{count:5,window:60}, PORT_SCAN:{distinctPorts:15,window:10},\n  CONN_FLOOD:{count:100,window:10}, DDOS_SPREAD:{distinctIps:20,window:10},\n};\nconst isInternal = ip => ip && INTERNAL_NETS.some(n=>ip.startsWith(n));\nconst shouldIgnore = ip => !ip || IGNORE_EXACT.includes(ip) || IGNORE_PREFIXES.some(p=>ip.startsWith(p));\nconst pickAttacker = (s,d) => (s&&!isInternal(s))?s:((d&&!isInternal(d))?d:(s||d));\n\nconst RE_ANY_IP=/\\b(\\d{1,3}(?:\\.\\d{1,3}){3})\\b/g;\nconst RE_TCP=/,tcp,\\d+,(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d+),(\\d+),[^,]*,([A-Z]*)/;\nconst RE_SSH=/Failed password for (?:invalid user )?(\\S+) from (\\d{1,3}(?:\\.\\d{1,3}){3}) port (\\d+)/;\n\nfunction extractSignal(raw){\n  const low=raw.toLowerCase();\n  const a=raw.match(RE_SSH);\n  if(a){const ip=a[2]; if(shouldIgnore(ip)||isInternal(ip))return null; return {kind:'auth_fail',src_ip:ip,dst_port:22};}\n  if(low.includes('filterlog')&&(low.includes(',block,')||low.includes(',pass,'))){\n    const ips=[...raw.matchAll(RE_ANY_IP)].map(m=>m[1]);\n    if(ips.length<2)return null;\n    const att=pickAttacker(ips[0],ips[1]);\n    if(isInternal(att)||shouldIgnore(att))return null;\n    const t=raw.match(RE_TCP); let dp=null,fl=null;\n    if(t){dp=parseInt(t[4],10);fl=t[5];}\n    return {kind:fl==='S'?'syn':'fw_block',src_ip:att,dst_port:dp};\n  }\n  return null;\n}\nconst nowFrom=l=>{const tb=l.indexOf('\\t'); if(tb<0)return Date.now()/1000; const t=Date.parse(l.slice(0,tb)); return isNaN(t)?Date.now()/1000:t/1000;};\n\n// Gom event theo IP\nconst events={};\nfor(const line of rawLines){\n  const tb=line.indexOf('\\t'); const raw=tb>=0?line.slice(tb+1):line; const now=nowFrom(line);\n  const sig=extractSignal(raw); if(!sig)continue;\n  (events[sig.src_ip]=events[sig.src_ip]||[]).push({ts:now,port:sig.dst_port,kind:sig.kind});\n}\nconst nowMax=rawLines.length?nowFrom(rawLines[rawLines.length-1]):Date.now()/1000;\nconst cntW=(l,w,k,p)=>l.filter(e=>(nowMax-e.ts)<=w&&(!k||e.kind===k)&&(p===undefined||e.port===p)).length;\nconst dportsW=(l,w,k)=>{const s=new Set();l.forEach(e=>{if((nowMax-e.ts)<=w&&(!k||e.kind===k)&&e.port!=null)s.add(e.port);});return s.size;};\n\n// ===== XET NGUONG (thu tu moi: PORT_SCAN truoc CONN_FLOOD) =====\nconst detections=[];\nfor(const ip of Object.keys(events)){\n  const l=events[ip]; let f=null;\n\n  // 1) BRUTE_FORCE: nhieu lan dang nhap sai cung 1 port\n  const af=l.filter(e=>e.kind==='auth_fail');\n  if(af.length){\n    const bp={}; af.forEach(e=>bp[e.port]=(bp[e.port]||0)+1);\n    for(const p of Object.keys(bp)){\n      const c=cntW(l,THRESHOLDS.BRUTE_FORCE.window,'auth_fail',Number(p));\n      if(c>=THRESHOLDS.BRUTE_FORCE.count){f={type:'BRUTE_FORCE',metric:c};break;}\n    }\n  }\n\n  // 2) PORT_SCAN (xet TRUOC): 1 IP cham NHIEU PORT khac nhau -> la scan (du nhanh)\n  if(!f){\n    const d=dportsW(l,THRESHOLDS.PORT_SCAN.window,'syn')+dportsW(l,THRESHOLDS.PORT_SCAN.window,'fw_block');\n    if(d>=THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'PORT_SCAN',metric:d};\n  }\n\n  // 3) CONN_FLOOD (DoS): volume cao NHUNG dong vao IT port (<15) -> flood, khong phai scan\n  if(!f){\n    const t=cntW(l,THRESHOLDS.CONN_FLOOD.window);\n    const dp=dportsW(l,THRESHOLDS.CONN_FLOOD.window);\n    if(t>=THRESHOLDS.CONN_FLOOD.count && dp<THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'CONN_FLOOD',metric:t};\n  }\n\n  if(f)detections.push({src_ip:ip,event_type:f.type,metric:f.metric});\n}\n\n// ===== DEDUPE qua SESSION (static data) — giong _banned =====\nconst staticData = $getWorkflowStaticData('global');\nstaticData.banned = staticData.banned || {PORT_SCAN:[],BRUTE_FORCE:[],CONN_FLOOD:[]};\n\nconst BAN_MAP={PORT_SCAN:'BanIP_Scanport.txt',BRUTE_FORCE:'BanIP_Bruteforce.txt',CONN_FLOOD:'BanIP_DDOS.txt'};\nconst newBans=[];\nfor(const d of detections){\n  const list = staticData.banned[d.event_type] || (staticData.banned[d.event_type]=[]);\n  if(!list.includes(d.src_ip)){\n    list.push(d.src_ip);\n    newBans.push({...d, ban_file:BAN_MAP[d.event_type]});\n  }\n}\n\n// ===== Gom theo file de ghi =====\nconst byFile={};\nfor(const b of newBans){ (byFile[b.ban_file]=byFile[b.ban_file]||[]).push(b); }\n\nconst out=[];\nfor(const file of Object.keys(byFile)){\n  const items=byFile[file];\n  out.push({ json:{\n    ban_file: file,\n    ips: items.map(i=>i.src_ip),\n    ban_content: items.map(i=>i.src_ip).join('\\n') + '\\n',\n    audit_content: items.map(i=>JSON.stringify({\n      ts:new Date().toISOString(), src_ip:i.src_ip,\n      event_type:i.event_type, metric:i.metric\n    })).join('\\n') + '\\n',\n    count: items.length,\n  }});\n}\n\nif(out.length===0){\n  return [{ json:{ no_new_ban:true, scanned:rawLines.length, total_detections:detections.length } }];\n}\nreturn out;"
       },
-      "id": "cF000000-0004-4004-8004-000000000004",
+      "id": "d6d301e4-e61b-454e-b9fc-f1ea16836d0d",
       "name": "Detect + Dedupe (Session)",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        760,
-        360
+        608,
+        368
       ]
     },
     {
@@ -85,25 +84,26 @@
             }
           ],
           "combinator": "and"
-        }
+        },
+        "options": {}
       },
-      "id": "cF000000-0100-0000-0000-000000000100",
+      "id": "1d5ffa52-044d-4296-b098-14ff49f3574c",
       "name": "Khong co ban moi?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        980,
-        360
+        832,
+        368
       ]
     },
     {
       "parameters": {},
-      "id": "cF000000-0101-0000-0000-000000000101",
+      "id": "fa48fa4b-f76b-49a0-9661-3e0d8b8b3a8e",
       "name": "Dung (khong co gi)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
-        1200,
+        1040,
         240
       ]
     },
@@ -113,13 +113,13 @@
         "sourceProperty": "ban_content",
         "options": {}
       },
-      "id": "cF000000-0102-0000-0000-000000000102",
+      "id": "e37f6c6c-3a26-43a4-bcab-140b145be473",
       "name": "Ban -> Binary",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        440
+        1040,
+        448
       ]
     },
     {
@@ -130,13 +130,13 @@
           "append": true
         }
       },
-      "id": "cF000000-0103-0000-0000-000000000103",
+      "id": "eb2bedc6-06b4-43d4-a68f-7758db344846",
       "name": "Ghi File Ban",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1420,
-        440
+        1264,
+        448
       ]
     },
     {
@@ -145,13 +145,13 @@
         "sourceProperty": "audit_content",
         "options": {}
       },
-      "id": "cF000000-0104-0000-0000-000000000104",
+      "id": "4eb1215d-4444-4620-9feb-8bc8a01a9fc3",
       "name": "Audit -> Binary",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1200,
-        600
+        1040,
+        608
       ]
     },
     {
@@ -162,16 +162,17 @@
           "append": true
         }
       },
-      "id": "cF000000-0105-0000-0000-000000000105",
+      "id": "b268af8d-6e98-4372-bd10-12577465ddd6",
       "name": "Ghi Audit Log",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1420,
-        600
+        1264,
+        608
       ]
     }
   ],
+  "pinData": {},
   "connections": {
     "Every 10s": {
       "main": [
@@ -263,8 +264,19 @@
       ]
     }
   },
+  "active": false,
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "timezone": "Asia/Ho_Chi_Minh",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
   },
-  "pinData": {}
+  "versionId": "90db457e-8b6b-4b35-af90-95c519b52274",
+  "meta": {
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "K0AxbHyAd8udHlwo",
+  "tags": []
 }
