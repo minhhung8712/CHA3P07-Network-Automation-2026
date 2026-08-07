@@ -1,0 +1,238 @@
+{
+  "name": "WF-METRICS-REPORT — Telegram Performance Report",
+  "nodes": [
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "db5da247-2415-4ac4-901c-d3f74c30ce9f",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -900,
+        0
+      ],
+      "webhookId": "b5e1cdfa-46ab-4db5-a58b-acb93ca3c833",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse lenh Telegram: /report, /report scan, /report brute, /report approve\nconst msg = $json.message || {};\nconst text = String(msg.text || '').trim();\nconst chatId = msg.chat?.id;\n\nconst lower = text.toLowerCase();\nlet scenario = 'ALL';\n\nif (lower === '/report scan' || lower === '/report_scan') scenario = 'BLOCK_SCAN';\nelse if (lower === '/report brute' || lower === '/report_brute') scenario = 'BLOCK_BRUTE';\nelse if (lower === '/report approve' || lower === '/report_approve') scenario = 'APPROVE_MAC';\n\nreturn [{\n  json: {\n    command: text,\n    chat_id: chatId,\n    is_report: lower === '/report' || lower.startsWith('/report ') || lower.startsWith('/report_'),\n    scenario\n  }\n}];"
+      },
+      "id": "a923e402-5271-4153-ae7a-5d1367b27ba5",
+      "name": "Parse Report Command",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -680,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.is_report }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "067ebfa7-2c83-4c11-81a3-b03fb5a6173f",
+      "name": "Is Report Command?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -460,
+        0
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "3d8ed9b8-8838-4197-ae66-ef781f083327",
+      "name": "Ignore Other Messages",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        140
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl",
+        "options": {}
+      },
+      "id": "4fb381f9-73a0-493d-acc5-39d1653f1eef",
+      "name": "Read Metrics File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -240,
+        -80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "27b20294-31d0-4d08-8f76-ae12b40e7fad",
+      "name": "Extract Metrics Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -20,
+        -80
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// BUILD METRICS REPORT\n// Doc processing_metrics.jsonl va tao report theo scenario\n// ================================================================\n\nconst request = $('Parse Report Command').first().json;\nconst scenario = request.scenario || 'ALL';\nconst chatId = request.chat_id;\n\nconst text = $('Extract Metrics Text').first()?.json?.data || '';\n\nconst records = text\n  .split(/\\r?\\n/)\n  .map(s => s.trim())\n  .filter(Boolean)\n  .map(line => {\n    try { return JSON.parse(line); }\n    catch { return null; }\n  })\n  .filter(Boolean);\n\nconst filtered = scenario === 'ALL'\n  ? records\n  : records.filter(r => r.scenario === scenario);\n\nconst valid = filtered.filter(r =>\n  r.status === 'success' &&\n  Number.isFinite(Number(r.total_processing_seconds))\n);\n\nif (filtered.length === 0) {\n  return [{\n    json: {\n      chat_id: chatId,\n      report_text:\n`📊 SECURITY AUTOMATION REPORT\n\nScenario: ${scenario}\n\nChưa có dữ liệu đo lường trong processing_metrics.jsonl.`\n    }\n  }];\n}\n\nconst times = valid\n  .map(r => Number(r.total_processing_seconds))\n  .sort((a, b) => a - b);\n\nconst avg = arr => arr.length\n  ? arr.reduce((a, b) => a + b, 0) / arr.length\n  : null;\n\nconst median = arr => {\n  if (!arr.length) return null;\n  const m = Math.floor(arr.length / 2);\n  return arr.length % 2 ? arr[m] : (arr[m - 1] + arr[m]) / 2;\n};\n\nconst percentile = (arr, p) => {\n  if (!arr.length) return null;\n  const i = Math.max(0, Math.min(arr.length - 1, Math.ceil((p / 100) * arr.length) - 1));\n  return arr[i];\n};\n\nconst average = avg(times);\nconst med = median(times);\nconst min = times.length ? times[0] : null;\nconst max = times.length ? times[times.length - 1] : null;\nconst p95 = percentile(times, 95);\n\nconst successCount = valid.length;\nconst failedCount = filtered.filter(r => r.status !== 'success').length;\nconst successRate = filtered.length ? (successCount / filtered.length) * 100 : 0;\n\nconst latest = [...filtered].sort((a, b) =>\n  Number(b.processing_finished_at_ms || b.finished_at_ms || 0) -\n  Number(a.processing_finished_at_ms || a.finished_at_ms || 0)\n)[0];\n\nconst sec = n => Number.isFinite(Number(n))\n  ? `${Number(n).toFixed(3)} s`\n  : 'N/A';\n\nconst scenarioLabel = {\n  ALL: 'ALL',\n  BLOCK_SCAN: 'BLOCK SCAN',\n  BLOCK_BRUTE: 'BLOCK BRUTE FORCE',\n  APPROVE_MAC: 'APPROVE MAC'\n}[scenario] || scenario;\n\nconst report =\n`📊 SECURITY AUTOMATION REPORT\n\nScenario: ${scenarioLabel}\n\nExecutions: ${filtered.length}\nSuccess: ${successCount}\nFailed: ${failedCount}\nSuccess rate: ${successRate.toFixed(1)}%\n\n⏱ END-TO-END PROCESSING TIME\nAnalyzer detected → Automation success\n\nAverage: ${sec(average)}\nMedian: ${sec(med)}\nFastest: ${sec(min)}\nSlowest: ${sec(max)}\nP95: ${sec(p95)}\n\n🔎 LATEST EXECUTION\nIP: ${latest?.ip || 'N/A'}\nEvent ID: ${latest?.event_id || 'N/A'}\nStatus: ${(latest?.status || 'unknown').toUpperCase()}\nTime: ${sec(latest?.total_processing_seconds)}\nDetected: ${latest?.analyzer_detected_at || latest?.started_at || 'N/A'}\nFinished: ${latest?.processing_finished_at || latest?.finished_at || 'N/A'}`;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    scenario,\n    total_records: filtered.length,\n    success_count: successCount,\n    failed_count: failedCount,\n    average_seconds: average,\n    median_seconds: med,\n    min_seconds: min,\n    max_seconds: max,\n    p95_seconds: p95,\n    report_text: report\n  }\n}];"
+      },
+      "id": "75cbfd07-b93d-4d3e-b2f7-3ff81f2f11ad",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        200,
+        -80
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.report_text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "id": "4c64f3d8-d9fe-4f4e-8355-0cdfb38d1311",
+      "name": "Send Telegram Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        440,
+        -80
+      ],
+      "webhookId": "2834ecd5-300b-4dca-903d-9ceb592c2ac2",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Parse Report Command",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Report Command": {
+      "main": [
+        [
+          {
+            "node": "Is Report Command?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Is Report Command?": {
+      "main": [
+        [
+          {
+            "node": "Read Metrics File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore Other Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Metrics File": {
+      "main": [
+        [
+          {
+            "node": "Extract Metrics Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metrics Text": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "8a399c0a-339c-45e7-adcb-c85ac5b28b56",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
