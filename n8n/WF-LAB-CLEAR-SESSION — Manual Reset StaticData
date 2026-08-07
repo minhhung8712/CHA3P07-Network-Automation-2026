@@ -1,0 +1,120 @@
+{
+  "name": "WF-LAB-CLEAR-SESSION — Manual Reset StaticData",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a414129f-eca7-428f-bda8-d33885ca128d",
+      "name": "Manual Trigger",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// DANH SACH WORKFLOW CAN CLEAR SESSION\n// Thay cac workflow_id placeholder bang ID workflow that cua ban.\n// ================================================================\n\nconst targets = [\n  { workflow_name: 'WF-ANALYZER',      workflow_id: 'REPLACE_ANALYZER_ID' },\n  { workflow_name: 'WF-BLOCK-SCAN',    workflow_id: 'OehWEViKfx2eOv31' },\n  { workflow_name: 'WF-BLOCK-BRUTE',   workflow_id: 'REPLACE_BLOCK_BRUTE_ID' },\n  { workflow_name: 'WF-DHCP-WATCH',    workflow_id: 'REPLACE_DHCP_WATCH_ID' },\n  { workflow_name: 'WF-DHCP-CALLBACK', workflow_id: 'REPLACE_DHCP_CALLBACK_ID' }\n];\n\nreturn targets.map(t => ({ json: t }));"
+      },
+      "id": "3309213d-4827-419c-bf6f-736c6e35fef4",
+      "name": "Define Workflows To Reset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -416,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "PATCH",
+        "url": "=http://192.168.10.2:5678/api/v1/workflows/{{ $json.workflow_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-N8N-API-KEY",
+              "value": "REPLACE_WITH_N8N_API_KEY"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={\"staticData\":{}}",
+        "options": {}
+      },
+      "id": "2187ce8e-59dc-464d-9b83-1235503051ef",
+      "name": "Clear Workflow StaticData",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -176,
+        0
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "return items.map(item => {\n  const j = item.json || {};\n  const hasError = Boolean(j.error || (!j.id && j.message));\n\n  return {\n    json: {\n      reset_ok: !hasError,\n      workflow_id: j.id || null,\n      workflow_name: j.name || null,\n      staticData_after_reset: j.staticData ?? null,\n      error: hasError ? (j.error || j.message || 'Unknown error') : null,\n      reset_at: new Date().toISOString()\n    }\n  };\n});"
+      },
+      "id": "52683b32-4b1f-4666-87e3-9f0ea2a375a3",
+      "name": "Reset Summary",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        64,
+        0
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger": {
+      "main": [
+        [
+          {
+            "node": "Define Workflows To Reset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Define Workflows To Reset": {
+      "main": [
+        [
+          {
+            "node": "Clear Workflow StaticData",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clear Workflow StaticData": {
+      "main": [
+        [
+          {
+            "node": "Reset Summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "9b7aba1e-bb89-40bd-bccd-e46aa607006b",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}
