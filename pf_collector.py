@@ -119,6 +119,7 @@ def main():
         if not raw:
             continue
 
+        print(f"[DEBUG] Nhan tu {sender_ip}: {raw[:120]}") 
         write_line(raw)
 
 
