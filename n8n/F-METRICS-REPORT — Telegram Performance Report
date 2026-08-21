@@ -1,0 +1,404 @@
+{
+  "name": "WF-METRICS-REPORT — Telegram Performance Report",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "fcdcf4e9-14ab-4fcb-9b87-7e75daba90a3",
+      "name": "Ignore Other Messages",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl",
+        "options": {}
+      },
+      "id": "deddd757-6f41-4ba6-a712-e2ac5c07cbb4",
+      "name": "Read Metrics File",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -16,
+        64
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "efaa3223-f640-4f45-ae82-a67e8d388587",
+      "name": "Extract Metrics Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        176,
+        64
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// BUILD REPORT - COMPACT PERFORMANCE REPORT\n// ================================================================\n\nconst request = $('Parse & Advance Offset').first().json;\nconst scenario = request.scenario || 'ALL';\nconst chatId = request.chat_id;\n\nconst text =\n  $('Extract Metrics Text').first()?.json?.data || '';\n\n// ================================================================\n// READ JSONL\n// ================================================================\n\nconst records = text\n  .split(/\\r?\\n/)\n  .map(s => s.trim())\n  .filter(Boolean)\n  .map(line => {\n    try {\n      return JSON.parse(line);\n    } catch {\n      return null;\n    }\n  })\n  .filter(Boolean);\n\n// ================================================================\n// FILTER SCENARIO\n// ================================================================\n\nconst filtered =\n  scenario === 'ALL'\n    ? records\n    : records.filter(r => r.scenario === scenario);\n\nconst scenarioLabel = {\n  ALL: 'TẤT CẢ KỊCH BẢN',\n  BLOCK_SCAN: 'PORT SCAN',\n  BLOCK_BRUTE: 'BRUTE FORCE',\n  APPROVE_MAC: 'PHÊ DUYỆT THIẾT BỊ'\n}[scenario] || scenario;\n\nconst scenarioIcon = {\n  ALL: '📊',\n  BLOCK_SCAN: '🛡',\n  BLOCK_BRUTE: '🔐',\n  APPROVE_MAC: '🖥'\n}[scenario] || '🛡';\n\nif (!filtered.length) {\n  return [{\n    json: {\n      chat_id: chatId,\n      report_text:\n`📊 BÁO CÁO HIỆU SUẤT\n\n${scenarioIcon} ${scenarioLabel}\n\nChưa có dữ liệu đo lường.`\n    }\n  }];\n}\n\n// ================================================================\n// GET REAL DURATION\n//\n// APPROVE_MAC:\n//   uu tien automation_after_approval_seconds\n//\n// SCAN / BRUTE:\n//   uu tien total_processing_seconds\n//\n// Neu duration qua lon -> thu tinh lai bang timestamp.\n// ================================================================\n\nfunction getDurationSeconds(r) {\n\n  // DHCP: automation sau khi admin approve\n  if (r.scenario === 'APPROVE_MAC') {\n\n    const autoSec =\n      Number(r.automation_after_approval_seconds);\n\n    if (\n      Number.isFinite(autoSec) &&\n      autoSec >= 0 &&\n      autoSec < 3600\n    ) {\n      return autoSec;\n    }\n\n    const approved =\n      Number(r.approved_at_ms);\n\n    const finished =\n      Number(\n        r.processing_finished_at_ms ||\n        r.finished_at_ms\n      );\n\n    if (\n      Number.isFinite(approved) &&\n      Number.isFinite(finished) &&\n      finished >= approved\n    ) {\n      const sec = (finished - approved) / 1000;\n\n      if (sec < 3600) {\n        return sec;\n      }\n    }\n  }\n\n  // Normal metric\n  const total =\n    Number(r.total_processing_seconds);\n\n  // Bao ve khoi Unix timestamp bi ghi nham\n  if (\n    Number.isFinite(total) &&\n    total >= 0 &&\n    total < 3600\n  ) {\n    return total;\n  }\n\n  // ================================================================\n  // FALLBACK: tinh lai tu timestamp\n  // ================================================================\n\n  const start =\n    Number(\n      r.analyzer_detected_at_ms ||\n      r.processing_started_at_ms ||\n      r.process_started_at_ms ||\n      r.started_at_ms\n    );\n\n  const end =\n    Number(\n      r.processing_finished_at_ms ||\n      r.finished_at_ms\n    );\n\n  if (\n    Number.isFinite(start) &&\n    Number.isFinite(end) &&\n    end >= start\n  ) {\n\n    const sec = (end - start) / 1000;\n\n    if (sec < 3600) {\n      return sec;\n    }\n  }\n\n  // Metric loi / khong the suy ra\n  return null;\n}\n\n// ================================================================\n// VALID RECORDS\n// ================================================================\n\nconst successRecords =\n  filtered.filter(r => r.status === 'success');\n\nconst failedRecords =\n  filtered.filter(r => r.status !== 'success');\n\nconst validRecords =\n  successRecords\n    .map(r => ({\n      record: r,\n      duration: getDurationSeconds(r)\n    }))\n    .filter(x =>\n      Number.isFinite(x.duration)\n    );\n\nconst times =\n  validRecords\n    .map(x => x.duration)\n    .sort((a, b) => a - b);\n\n// ================================================================\n// STATISTICS\n// ================================================================\n\nfunction average(arr) {\n  if (!arr.length) return null;\n\n  return (\n    arr.reduce((sum, n) => sum + n, 0) /\n    arr.length\n  );\n}\n\nfunction median(arr) {\n  if (!arr.length) return null;\n\n  const mid =\n    Math.floor(arr.length / 2);\n\n  return arr.length % 2\n    ? arr[mid]\n    : (arr[mid - 1] + arr[mid]) / 2;\n}\n\nfunction percentile(arr, p) {\n  if (!arr.length) return null;\n\n  const index =\n    Math.ceil((p / 100) * arr.length) - 1;\n\n  return arr[\n    Math.max(\n      0,\n      Math.min(index, arr.length - 1)\n    )\n  ];\n}\n\nconst avg = average(times);\nconst med = median(times);\n\nconst min =\n  times.length\n    ? times[0]\n    : null;\n\nconst max =\n  times.length\n    ? times[times.length - 1]\n    : null;\n\nconst p95 =\n  percentile(times, 95);\n\nconst successRate =\n  filtered.length\n    ? (\n        successRecords.length /\n        filtered.length\n      ) * 100\n    : 0;\n\n// ================================================================\n// FORMAT DURATION\n// ================================================================\n\nfunction formatDuration(seconds) {\n\n  const sec = Number(seconds);\n\n  if (!Number.isFinite(sec)) {\n    return 'N/A';\n  }\n\n  // < 1 second\n  if (sec < 1) {\n    return `${Math.round(sec * 1000)} ms`;\n  }\n\n  // < 60 seconds\n  if (sec < 60) {\n    return `${sec.toFixed(2)}s`;\n  }\n\n  // >= 60 seconds\n  const minutes =\n    Math.floor(sec / 60);\n\n  const remain =\n    sec % 60;\n\n  return `${minutes}m ${remain.toFixed(1)}s`;\n}\n\n// ================================================================\n// DATE FORMAT\n// ================================================================\n\nfunction formatDateTime(value) {\n\n  if (!value) {\n    return 'N/A';\n  }\n\n  const date =\n    new Date(value);\n\n  if (Number.isNaN(date.getTime())) {\n    return 'N/A';\n  }\n\n  return new Intl.DateTimeFormat(\n    'vi-VN',\n    {\n      timeZone: 'Asia/Ho_Chi_Minh',\n      day: '2-digit',\n      month: '2-digit',\n      year: 'numeric',\n      hour: '2-digit',\n      minute: '2-digit',\n      second: '2-digit',\n      hour12: false\n    }\n  ).format(date);\n}\n\n// ================================================================\n// LATEST RECORD\n// ================================================================\n\nconst latest =\n  [...filtered]\n    .sort((a, b) =>\n      Number(\n        b.processing_finished_at_ms ||\n        b.finished_at_ms ||\n        0\n      ) -\n      Number(\n        a.processing_finished_at_ms ||\n        a.finished_at_ms ||\n        0\n      )\n    )[0];\n\nconst latestDuration =\n  getDurationSeconds(latest);\n\n// ================================================================\n// LATEST DEVICE INFORMATION\n// ================================================================\n\nlet latestIdentity = '';\n\nif (scenario === 'APPROVE_MAC') {\n\n  latestIdentity =\n`MAC: ${latest?.mac || 'N/A'}\nIP: ${latest?.ip || 'N/A'}`;\n\n} else {\n\n  latestIdentity =\n`IP: ${latest?.ip || 'N/A'}`;\n}\n\n// ================================================================\n// METRIC LABEL\n// ================================================================\n\nlet metricLabel =\n  '⏱ THỜI GIAN XỬ LÝ';\n\nif (scenario === 'APPROVE_MAC') {\n  metricLabel =\n    '⏱ TỰ ĐỘNG HÓA SAU KHI APPROVE';\n}\n\n// ================================================================\n// INVALID METRIC WARNING\n// ================================================================\n\nconst invalidCount =\n  successRecords.length -\n  validRecords.length;\n\nlet warning = '';\n\nif (invalidCount > 0) {\n\n  warning =\n`\\n⚠️ ${invalidCount} bản ghi có thời gian không hợp lệ và không được tính thống kê.\\n`;\n}\n\n// ================================================================\n// BUILD COMPACT REPORT\n// ================================================================\n\nconst report =\n`📊 BÁO CÁO HIỆU SUẤT\n\n${scenarioIcon} ${scenarioLabel}\n\n✅ ${successRecords.length}/${filtered.length} thành công • ${successRate.toFixed(0)}%\n${warning}\n${metricLabel}\nTB: ${formatDuration(avg)}\nMedian: ${formatDuration(med)}\nMin: ${formatDuration(min)} • Max: ${formatDuration(max)}\nP95: ${formatDuration(p95)}\n\n🔎 GẦN NHẤT\n${latestIdentity}\nThời gian: ${formatDuration(latestDuration)}\nHoàn thành: ${formatDateTime(\n  latest?.processing_finished_at ||\n  latest?.finished_at\n)}`;\n\n// ================================================================\n// OUTPUT\n// ================================================================\n\nreturn [{\n  json: {\n\n    chat_id: chatId,\n    scenario,\n\n    total_records:\n      filtered.length,\n\n    success_count:\n      successRecords.length,\n\n    failed_count:\n      failedRecords.length,\n\n    invalid_duration_count:\n      invalidCount,\n\n    success_rate:\n      Number(\n        successRate.toFixed(2)\n      ),\n\n    average_seconds:\n      avg,\n\n    median_seconds:\n      med,\n\n    min_seconds:\n      min,\n\n    max_seconds:\n      max,\n\n    p95_seconds:\n      p95,\n\n    report_text:\n      report\n  }\n}];"
+      },
+      "id": "5d9b8745-27fb-47b2-9f72-931ca59b5139",
+      "name": "Build Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "=247349952",
+        "text": "={{ $json.report_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "96d67505-4f01-4afa-b6ac-1fd00aa58a0d",
+      "name": "Send Telegram Report",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        592,
+        64
+      ],
+      "webhookId": "2834ecd5-300b-4dca-903d-9ceb592c2ac2",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// PREPARE REPORT POLL\n// Doc offset tu report_offset.txt\n// ================================================================\n\nconst raw = String(\n  $('Extract Report Offset').first()?.json?.data || '0'\n).trim();\n\nlet offset = Number.parseInt(raw, 10);\n\nif (!Number.isFinite(offset) || offset < 0) {\n  offset = 0;\n}\n\nreturn [{\n  json: {\n    offset\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -816,
+        80
+      ],
+      "id": "d195ffe8-88b5-479a-a609-08a79c043a5f",
+      "name": "Prepare Poll"
+    },
+    {
+      "parameters": {
+        "url": "=https://api.telegram.org/bot8418267935:AAFCy7HAfkJVq4DH6Ncilchjev8AIyqm80o/getUpdates",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "offset",
+              "value": "={{ $json.offset }}"
+            },
+            {
+              "name": "timeout",
+              "value": "0"
+            },
+            {
+              "name": "limit",
+              "value": "100"
+            },
+            {
+              "name": "allowed_updates",
+              "value": "[\"message\"]"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -624,
+        80
+      ],
+      "id": "0983c288-a07a-476f-90b4-5bdd14c4d9e3",
+      "name": "Get Telegram Updates"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/telegram/report_offset.txt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -1184,
+        80
+      ],
+      "id": "a25026b2-46c1-4ec5-baf7-a5fba87a6827",
+      "name": "Read Report Offset"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        -976,
+        80
+      ],
+      "id": "f6371d34-faf9-486c-8bb7-b2fb664ffd86",
+      "name": "Extract Report Offset"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// PARSE + ADVANCE REPORT OFFSET\n// - Lan dau offset=0: dong bo backlog, KHONG xu ly report cu\n// - Cac lan sau: chi lay /report moi nhat trong batch hien tai\n// - Luon tao next_offset de ghi vao report_offset.txt\n// ================================================================\n\nconst updates = Array.isArray($json.result)\n  ? $json.result\n  : [];\n\nconst currentOffset = Number(\n  $('Prepare Poll').first()?.json?.offset || 0\n);\n\n// Khong co update moi\nif (updates.length === 0) {\n  return [{\n    json: {\n      has_report: false,\n      sync_only: false,\n      current_offset: currentOffset,\n      next_offset: currentOffset,\n      offset_content: String(currentOffset)\n    }\n  }];\n}\n\n// Sap xep theo update_id\nupdates.sort(\n  (a, b) =>\n    Number(a.update_id || 0) -\n    Number(b.update_id || 0)\n);\n\nconst updateIds = updates\n  .map(u => Number(u.update_id))\n  .filter(Number.isFinite);\n\nconst maxUpdateId = Math.max(...updateIds);\nconst nextOffset = maxUpdateId + 1;\n\n// ================================================================\n// LAN DAU TIEN\n// offset = 0 -> Telegram dang tra backlog cu\n// Chi dong bo cursor den update moi nhat, KHONG gui report\n// ================================================================\n\nif (currentOffset === 0) {\n  return [{\n    json: {\n      has_report: false,\n      sync_only: true,\n\n      current_offset: 0,\n      next_offset: nextOffset,\n      offset_content: String(nextOffset),\n\n      skipped_backlog: updates.length\n    }\n  }];\n}\n\n// ================================================================\n// CAC LAN SAU: TIM /report TRONG BATCH MOI\n// ================================================================\n\nconst reports = [];\n\nfor (const u of updates) {\n  const msg = u.message;\n\n  if (!msg?.text) continue;\n\n  const text = String(msg.text).trim();\n\n  // Chi nhan /report\n  if (!/^\\/report(?:@\\w+)?(?:\\s|$)/i.test(text)) {\n    continue;\n  }\n\n  const lower = text.toLowerCase();\n\n  let scenario = 'ALL';\n\n  if (/\\bscan\\b/.test(lower)) {\n    scenario = 'BLOCK_SCAN';\n  }\n  else if (/\\bbrute\\b/.test(lower)) {\n    scenario = 'BLOCK_BRUTE';\n  }\n  else if (\n    /\\bapprove\\b/.test(lower) ||\n    /\\bdhcp\\b/.test(lower)\n  ) {\n    scenario = 'APPROVE_MAC';\n  }\n\n  reports.push({\n    update_id: Number(u.update_id),\n    command: text,\n    scenario,\n    chat_id: msg.chat?.id\n  });\n}\n\n// Khong co /report trong batch moi\nif (reports.length === 0) {\n  return [{\n    json: {\n      has_report: false,\n      sync_only: false,\n\n      current_offset: currentOffset,\n      next_offset: nextOffset,\n      offset_content: String(nextOffset)\n    }\n  }];\n}\n\n// Neu co nhieu command, lay command MOI NHAT\nreports.sort(\n  (a, b) => b.update_id - a.update_id\n);\n\nconst latest = reports[0];\n\nreturn [{\n  json: {\n    has_report: true,\n    sync_only: false,\n\n    command: latest.command,\n    scenario: latest.scenario,\n    chat_id: latest.chat_id,\n    update_id: latest.update_id,\n\n    current_offset: currentOffset,\n    next_offset: nextOffset,\n\n    // Dung de ghi report_offset.txt\n    offset_content: String(nextOffset)\n  }\n}];"
+      },
+      "id": "f8ab232c-19c0-4726-a03a-ecd6b90b6a5d",
+      "name": "Parse & Advance Offset",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -432,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.has_report }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "9003e3ab-afc7-4009-b83f-aad808027987"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "853cce0a-ac91-41ad-a31a-39aee7bf6c7a",
+      "name": "Has Report?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "offset_content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        -496,
+        432
+      ],
+      "id": "852e3f7e-55e4-46bc-80fa-5f62d825139f",
+      "name": "Offset → File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/telegram/report_offset.txt",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -288,
+        432
+      ],
+      "id": "18a138fd-f6c9-46fa-a092-95c15b98e5d9",
+      "name": "Write Report Offset"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -1392,
+        80
+      ],
+      "id": "7c828f4d-c569-4f67-a90b-a13d0469d2af",
+      "name": "Every 5s"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Read Metrics File": {
+      "main": [
+        [
+          {
+            "node": "Extract Metrics Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Metrics Text": {
+      "main": [
+        [
+          {
+            "node": "Build Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Report": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Poll": {
+      "main": [
+        [
+          {
+            "node": "Get Telegram Updates",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Telegram Updates": {
+      "main": [
+        [
+          {
+            "node": "Parse & Advance Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Report Offset": {
+      "main": [
+        [
+          {
+            "node": "Extract Report Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Report Offset": {
+      "main": [
+        [
+          {
+            "node": "Prepare Poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Advance Offset": {
+      "main": [
+        [
+          {
+            "node": "Has Report?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Offset → File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Report?": {
+      "main": [
+        [
+          {
+            "node": "Read Metrics File",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ignore Other Messages",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Offset → File": {
+      "main": [
+        [
+          {
+            "node": "Write Report Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5s": {
+      "main": [
+        [
+          {
+            "node": "Read Report Offset",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "860d4709-1249-4471-8a56-890f407b7e96",
+  "meta": {
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "9D6rTn5uneYgeTnm",
+  "tags": []
+}
