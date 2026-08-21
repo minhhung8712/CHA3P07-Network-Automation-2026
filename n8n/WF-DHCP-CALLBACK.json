@@ -3,31 +3,7 @@
   "nodes": [
     {
       "parameters": {
-        "updates": [
-          "callback_query"
-        ],
-        "additionalFields": {}
-      },
-      "id": "cf002e30-0883-43a1-8a54-86504183709a",
-      "name": "On Button Press",
-      "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.1,
-      "position": [
-        -960,
-        496
-      ],
-      "webhookId": "cb00cb00-cb00-4cb0-8cb0-cb00cb00cb00",
-      "credentials": {
-        "telegramApi": {
-          "id": "c6glCn4dTs6D8N5J",
-          "name": "2026v1bot"
-        }
-      },
-      "disabled": true
-    },
-    {
-      "parameters": {
-        "jsCode": "const s = $getWorkflowStaticData('global');\nconst res = $json.result || [];\nif (!res.length) return [];        // <-- khong co gi -> DUNG han, khong chay tiep\n\ns.tg_offset = Math.max(...res.map(u => u.update_id)) + 1;\n\nconst out = [];\nfor (const u of res) {\n  const cq = u.callback_query;\n  if (!cq || !cq.data) continue;\n  const i = cq.data.indexOf('|');\n  const action = (i >= 0 ? cq.data.slice(0, i) : cq.data).trim().toLowerCase();\n  const mac    = (i >= 0 ? cq.data.slice(i + 1) : '').trim().toLowerCase();\n  if (!action || !mac) continue;    // callback la -> bo qua, khong REJECT nham\n  out.push({ json: {\n    action, mac,\n    callback_query_id: cq.id,\n    chat_id: cq.message?.chat?.id,\n    message_id: cq.message?.message_id,\n    by: cq.from?.username || cq.from?.first_name || 'admin'\n  }});\n}\nreturn out;                         // <-- rong cung dung luon\n"
+        "jsCode": "// ================================================================\n// PARSE CALLBACK ONLY\n// WF-DHCP-CALLBACK chi xu ly callback_query\n// Message text (/report, chat thuong...) -> BO QUA\n// ================================================================\n\nconst s = $getWorkflowStaticData('global');\nconst res = Array.isArray($json.result) ? $json.result : [];\n\nif (res.length === 0) {\n  return [];\n}\n\nconst callbacks = [];\n\nfor (const u of res) {\n\n  // Khong phai callback -> bo qua\n  const cq = u.callback_query;\n\n  if (!cq || !cq.data) {\n    continue;\n  }\n\n  const data = String(cq.data).trim();\n  const separator = data.indexOf('|');\n\n  const action = (\n    separator >= 0\n      ? data.slice(0, separator)\n      : data\n  ).trim().toLowerCase();\n\n  const mac = (\n    separator >= 0\n      ? data.slice(separator + 1)\n      : ''\n  ).trim().toLowerCase();\n\n  // Chi chap nhan APPROVE / REJECT\n  if (!['approve', 'reject'].includes(action)) {\n    continue;\n  }\n\n  if (!mac) {\n    continue;\n  }\n\n  callbacks.push({\n    update_id: Number(u.update_id || 0),\n\n    action,\n    mac,\n\n    callback_query_id: cq.id,\n\n    chat_id:\n      cq.message?.chat?.id || null,\n\n    message_id:\n      cq.message?.message_id || null,\n\n    by:\n      cq.from?.username ||\n      cq.from?.first_name ||\n      'admin'\n  });\n}\n\n// Khong co callback hop le -> dung workflow\nif (callbacks.length === 0) {\n  return [];\n}\n\n// Sap xep de xu ly dung thu tu\ncallbacks.sort(\n  (a, b) => a.update_id - b.update_id\n);\n\n// Cap nhat callback offset\nconst maxCallbackUpdateId =\n  Math.max(...callbacks.map(x => x.update_id));\n\ns.tg_offset = maxCallbackUpdateId + 1;\n\nreturn callbacks.map(c => ({\n  json: c\n}));"
       },
       "id": "d04cfbdd-a7d2-4f55-9e78-67a45c71f0fb",
       "name": "Parse Callback",
@@ -67,7 +43,7 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        -288,
+        -224,
         160
       ]
     },
@@ -81,8 +57,8 @@
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        -96,
-        0
+        272,
+        -384
       ],
       "onError": "continueRegularOutput"
     },
@@ -96,8 +72,8 @@
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        112,
-        0
+        480,
+        -384
       ],
       "onError": "continueRegularOutput"
     },
@@ -111,8 +87,8 @@
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        304,
-        0
+        672,
+        -384
       ],
       "onError": "continueRegularOutput"
     },
@@ -126,8 +102,8 @@
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        512,
-        0
+        848,
+        -384
       ],
       "onError": "continueRegularOutput"
     },
@@ -140,8 +116,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        912,
-        0
+        672,
+        -144
       ]
     },
     {
@@ -153,8 +129,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -96,
-        320
+        -32,
+        576
       ]
     },
     {
@@ -168,8 +144,8 @@
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        112,
-        320
+        176,
+        576
       ]
     },
     {
@@ -185,29 +161,9 @@
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        304,
-        320
+        368,
+        576
       ]
-    },
-    {
-      "parameters": {
-        "rule": {
-          "interval": [
-            {
-              "field": "seconds",
-              "secondsInterval": 10
-            }
-          ]
-        }
-      },
-      "type": "n8n-nodes-base.scheduleTrigger",
-      "typeVersion": 1.3,
-      "position": [
-        -928,
-        160
-      ],
-      "id": "12bfb3a7-b411-45e5-b6cf-09010788ad95",
-      "name": "Every 10s"
     },
     {
       "parameters": {
@@ -243,8 +199,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        704,
-        0
+        1072,
+        -384
       ],
       "id": "855f8c1b-b98c-4222-bb59-9405116cc28f",
       "name": "Resolve Pending Device"
@@ -276,8 +232,8 @@
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
       "position": [
-        1632,
-        0
+        48,
+        64
       ],
       "onError": "continueRegularOutput"
     },
@@ -292,8 +248,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        512,
-        320
+        576,
+        576
       ],
       "id": "3270b54c-be52-4bfa-b1b0-f6d33167dd09",
       "name": "Send a text message",
@@ -316,8 +272,8 @@
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        2320,
-        272
+        48,
+        304
       ],
       "id": "d3a4ddce-5595-49f7-9b01-cfeda4d80717",
       "name": "Send a text message1",
@@ -331,23 +287,6 @@
     },
     {
       "parameters": {
-        "operation": "write",
-        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
-        "options": {
-          "append": true
-        }
-      },
-      "id": "c4a787ee-eff1-4a89-9d0c-ecbb7bf35d01",
-      "name": "Ghi approved_macs.txt",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        1360,
-        0
-      ]
-    },
-    {
-      "parameters": {
         "operation": "toText",
         "sourceProperty": "approved_line",
         "options": {}
@@ -357,8 +296,8 @@
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1136,
-        0
+        896,
+        -144
       ]
     },
     {
@@ -368,41 +307,12 @@
       "type": "n8n-nodes-base.wait",
       "typeVersion": 1.1,
       "position": [
-        1632,
-        304
+        240,
+        64
       ],
       "id": "aa763721-74c5-4ba6-94cf-c2a616c2e725",
       "name": "Wait",
       "webhookId": "01a3ea92-43f4-4949-8b06-d3223ea68010"
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "https://api.telegram.org/bot<BOT_TOKEN>/sendMessage",
-        "sendHeaders": true,
-        "headerParameters": {
-          "parameters": [
-            {
-              "name": "Content-Type",
-              "value": "application/json"
-            }
-          ]
-        },
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({ chat_id: '<CHAT_ID>', text: $json.telegram_text, reply_markup: $json.reply_markup }) }}",
-        "options": {}
-      },
-      "id": "e365c7e6-393c-44b6-a6c1-cbc15d670b1d",
-      "name": "Gui Telegram (hoi QTV)",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4.2,
-      "position": [
-        2240,
-        1488
-      ],
-      "disabled": true,
-      "onError": "continueRegularOutput"
     },
     {
       "parameters": {
@@ -414,23 +324,8 @@
       "type": "n8n-nodes-base.extractFromFile",
       "typeVersion": 1,
       "position": [
-        1888,
-        560
-      ],
-      "onError": "continueRegularOutput"
-    },
-    {
-      "parameters": {
-        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/dhcp.log",
-        "options": {}
-      },
-      "id": "4e3e3f79-136b-467e-b898-2f3f8c05b5d6",
-      "name": "Read dhcp.log (verify)",
-      "type": "n8n-nodes-base.readWriteFile",
-      "typeVersion": 1,
-      "position": [
-        1824,
-        304
+        704,
+        80
       ],
       "onError": "continueRegularOutput"
     },
@@ -441,8 +336,8 @@
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        2096,
-        560
+        928,
+        80
       ],
       "id": "3da978e0-ed5f-4b68-b011-0ffdeb8d8357",
       "name": "Find DHCPACK by MAC"
@@ -475,20 +370,179 @@
       "type": "n8n-nodes-base.if",
       "typeVersion": 2.3,
       "position": [
-        2304,
-        560
+        1168,
+        64
       ],
       "id": "2bf60de8-5ea8-421c-940e-0fbf5b7a95b1",
       "name": "Find DHCPACK by MAC2"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/pflogs/approved_macs.txt",
+        "options": {
+          "append": true
+        }
+      },
+      "id": "c4a787ee-eff1-4a89-9d0c-ecbb7bf35d01",
+      "name": "Write approved_macs.txt",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        -144
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/pfsense.log",
+        "options": {}
+      },
+      "id": "4e3e3f79-136b-467e-b898-2f3f8c05b5d6",
+      "name": "Read pfsense.log (verify)",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        464,
+        64
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// MARK APPROVAL RECEIVED\n// Moc n8n nhan callback APPROVE\n// ================================================================\n\nconst now = Date.now();\n\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n\n    approved_at_ms: now,\n    approved_at: new Date(now).toISOString()\n  }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        -384
+      ],
+      "id": "c22fac11-25ff-4b13-ab92-8286ab75014b",
+      "name": "Mark Approval Received"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        256,
+        -144
+      ],
+      "id": "e9c0a92e-dc79-46cd-b103-542f2524686c",
+      "name": "Extract Approval Event"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// FIND APPROVAL EVENT\n// Match MAC hien tai voi DeviceEvent_Approval.jsonl\n// ================================================================\n\nconst device = $('Resolve Pending Device').item.json;\nconst approval = $('Mark Approval Received').item.json;\n\nconst mac = String(\n  device.mac ||\n  device.client_mac ||\n  ''\n).trim().toLowerCase();\n\nif (!mac) {\n  throw new Error('Khong tim thay MAC tu Resolve Pending Device');\n}\n\nconst text =\n  $('Extract Approval Event').first()?.json?.data || '';\n\nconst events = text\n  .split(/\\r?\\n/)\n  .map(s => s.trim())\n  .filter(Boolean)\n  .map(line => {\n    try {\n      return JSON.parse(line);\n    } catch {\n      return null;\n    }\n  })\n  .filter(event =>\n    event &&\n    String(event.mac || '').toLowerCase() === mac &&\n    event.scenario === 'APPROVE_MAC'\n  )\n  .sort(\n    (a, b) =>\n      Number(b.process_started_at_ms || 0) -\n      Number(a.process_started_at_ms || 0)\n  );\n\nconst event = events[0] || null;\n\nreturn [{\n  json: {\n    ...device,\n\n    scenario: 'APPROVE_MAC',\n\n    metrics_found: Boolean(event),\n\n    event_id:\n      event?.event_id || null,\n\n    process_started_at_ms:\n      event?.process_started_at_ms || null,\n\n    process_started_at:\n      event?.process_started_at || null,\n\n    approved_at_ms:\n      approval.approved_at_ms || null,\n\n    approved_at:\n      approval.approved_at || null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        -144
+      ],
+      "id": "2861ce57-969c-4c30-a6d7-ca9bfb6e5870",
+      "name": "Find Approval Event"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/DeviceEvent_Approval.jsonl",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        48,
+        -144
+      ],
+      "id": "a7db336b-520d-448a-951a-251954fc6019",
+      "name": "Read Approval Event"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// END APPROVAL PROCESSING\n// New MAC detected -> DHCPACK verified\n// ================================================================\n\nconst context = $('Find Approval Event').item.json;\n\nconst start = Number(context.process_started_at_ms);\nconst approved = Number(context.approved_at_ms);\nconst end = Date.now();\n\nif (!Number.isFinite(start)) {\n  throw new Error('Khong tim thay process_started_at_ms');\n}\n\nconst totalMs = end - start;\n\nreturn [{\n  json: {\n    ...context,\n\n    status: 'success',\n\n    processing_finished_at_ms: end,\n    processing_finished_at:\n      new Date(end).toISOString(),\n\n    // Tong: New MAC detected -> DHCPACK verified\n    total_processing_ms: totalMs,\n\n    total_processing_seconds:\n      Number((totalMs / 1000).toFixed(3)),\n\n    // Rieng automation: n8n nhan APPROVE -> DHCPACK verified\n    automation_after_approval_ms:\n      Number.isFinite(approved)\n        ? end - approved\n        : null,\n\n    automation_after_approval_seconds:\n      Number.isFinite(approved)\n        ? Number(((end - approved) / 1000).toFixed(3))\n        : null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        304
+      ],
+      "id": "42d31461-76f5-4c56-a088-98c59fa26031",
+      "name": "End Approval Processing"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// PREPARE METRICS - APPROVE_MAC\n// ================================================================\n\nconst metric = {\n  schema_version: 1,\n\n  scenario: 'APPROVE_MAC',\n  event_id: $json.event_id || null,\n\n  mac: $json.mac || null,\n  hostname: $json.hostname || null,\n\n  ip:\n    $json.ip ||\n    $json.assigned_ip ||\n    null,\n\n  status: $json.status || 'success',\n\n  // START: phat hien thiet bi moi\n  process_started_at_ms:\n    $json.process_started_at_ms,\n\n  process_started_at:\n    $json.process_started_at,\n\n  // n8n nhan APPROVE\n  approved_at_ms:\n    $json.approved_at_ms,\n\n  approved_at:\n    $json.approved_at,\n\n  // END: DHCPACK verified\n  processing_finished_at_ms:\n    $json.processing_finished_at_ms,\n\n  processing_finished_at:\n    $json.processing_finished_at,\n\n  // Tong end-to-end\n  total_processing_ms:\n    $json.total_processing_ms,\n\n  total_processing_seconds:\n    $json.total_processing_seconds,\n\n  // Automation sau approval\n  automation_after_approval_ms:\n    $json.automation_after_approval_ms,\n\n  automation_after_approval_seconds:\n    $json.automation_after_approval_seconds\n};\n\nreturn [{\n  json: {\n    ...$json,\n    metrics_content:\n      JSON.stringify(metric) + '\\n'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        464,
+        304
+      ],
+      "id": "332838b7-ff6d-4384-b6dd-b83740d2645d",
+      "name": "Prepare Metrics"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "metrics_content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        704,
+        304
+      ],
+      "id": "0d03ea1c-f233-4707-98c9-a77212feda84",
+      "name": "Metrics → File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl",
+        "options": {
+          "append": true
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        928,
+        304
+      ],
+      "id": "ef7cbf25-fb18-4e55-9cac-6b366475da3e",
+      "name": "Write Metrics"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 5
+            }
+          ]
+        }
+      },
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        -928,
+        160
+      ],
+      "id": "12bfb3a7-b411-45e5-b6cf-09010788ad95",
+      "name": "Every 5s"
     }
   ],
   "pinData": {},
   "connections": {
-    "On Button Press": {
-      "main": [
-        []
-      ]
-    },
     "Parse Callback": {
       "main": [
         [
@@ -504,7 +558,7 @@
       "main": [
         [
           {
-            "node": "Read Approved (cb)",
+            "node": "Mark Approval Received",
             "type": "main",
             "index": 0
           }
@@ -606,17 +660,6 @@
         ]
       ]
     },
-    "Every 10s": {
-      "main": [
-        [
-          {
-            "node": "Get Offset",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
     "Get Offset": {
       "main": [
         [
@@ -643,7 +686,7 @@
       "main": [
         [
           {
-            "node": "Pick Free IP",
+            "node": "Read Approval Event",
             "type": "main",
             "index": 0
           }
@@ -663,25 +706,20 @@
     },
     "Send a text message1": {
       "main": [
-        []
-      ]
-    },
-    "Approved -> Binary": {
-      "main": [
         [
           {
-            "node": "Ghi approved_macs.txt",
+            "node": "End Approval Processing",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Ghi approved_macs.txt": {
+    "Approved -> Binary": {
       "main": [
         [
           {
-            "node": "Ansible /add-static-mapping",
+            "node": "Write approved_macs.txt",
             "type": "main",
             "index": 0
           }
@@ -692,7 +730,7 @@
       "main": [
         [
           {
-            "node": "Read dhcp.log (verify)",
+            "node": "Read pfsense.log (verify)",
             "type": "main",
             "index": 0
           }
@@ -704,17 +742,6 @@
         [
           {
             "node": "Find DHCPACK by MAC",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Read dhcp.log (verify)": {
-      "main": [
-        [
-          {
-            "node": "Extract DHCP (verify)",
             "type": "main",
             "index": 0
           }
@@ -740,16 +767,133 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write approved_macs.txt": {
+      "main": [
+        [
+          {
+            "node": "Ansible /add-static-mapping",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read pfsense.log (verify)": {
+      "main": [
+        [
+          {
+            "node": "Extract DHCP (verify)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Approval Received": {
+      "main": [
+        [
+          {
+            "node": "Read Approved (cb)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Approval Event": {
+      "main": [
+        [
+          {
+            "node": "Find Approval Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Approval Event": {
+      "main": [
+        [
+          {
+            "node": "Pick Free IP",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read Approval Event": {
+      "main": [
+        [
+          {
+            "node": "Extract Approval Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "End Approval Processing": {
+      "main": [
+        [
+          {
+            "node": "Prepare Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metrics": {
+      "main": [
+        [
+          {
+            "node": "Metrics → File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metrics → File": {
+      "main": [
+        [
+          {
+            "node": "Write Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 5s": {
+      "main": [
+        [
+          {
+            "node": "Get Offset",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate"
   },
-  "versionId": "3e009b06-31ff-4d9c-b76f-7a792066851e",
+  "versionId": "528a06cc-cdc1-4d8d-8589-464eae9ed082",
   "meta": {
     "templateCredsSetupCompleted": true,
     "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
