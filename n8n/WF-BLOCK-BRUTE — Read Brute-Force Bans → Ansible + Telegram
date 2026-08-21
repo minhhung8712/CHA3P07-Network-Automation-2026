@@ -1,0 +1,474 @@
+{
+  "name": "WF-BLOCK-BRUTE — Read Brute-Force Bans → Ansible + Telegram",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "7466188f-275a-4281-98a8-768dc7195c89",
+      "name": "Every 10s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -912,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/BanIP_Bruteforce.txt",
+        "options": {}
+      },
+      "id": "fd39ca75-24ef-44a7-ae81-bae50203a70d",
+      "name": "Read BanIP_Bruteforce",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -720,
+        -48
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "d2539cae-8979-4952-bb4b-c88a6d06f163",
+      "name": "Extract Ban Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -512,
+        -48
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "14bdb900-05ae-444b-ae89-3b6333591d4d",
+      "name": "Block OK",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1904,
+        -112
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// WF-BLOCK-BRUTE\n// FILTER NEW IPs + LAB RESET\n// Production: van dedupe IP de tranh block trung\n// Lab: cho phep reset cung IP de thu nghiem nhieu lan\n// ================================================================\n\nconst content = $('Extract Ban Text').first()?.json?.data || '';\nconst ips = content.split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\n\nconst staticData = $getWorkflowStaticData('global');\n\n// Session rieng cua WF-BLOCK-BRUTE\nstaticData.blocked = Array.isArray(staticData.blocked)\n  ? staticData.blocked\n  : [];\n\nstaticData.labResetTokens =\n  staticData.labResetTokens || {};\n\n// ================================================================\n// LAB RESET\n// Muon test lai cung IP -> doi token\n// ================================================================\n\nconst LAB_RESET = {\n  enabled: true,\n\n  // DOI THANH IP MAY DUNG DE TEST BRUTE FORCE\n  ip: '192.168.183.133',\n\n  // Moi lan test lai chi can doi token:\n  // brute-test-001\n  // brute-test-002\n  // brute-test-003...\n  token: 'brute-test-009'\n};\n\nif (\n  LAB_RESET.enabled &&\n  LAB_RESET.ip &&\n  staticData.labResetTokens[LAB_RESET.ip] !== LAB_RESET.token\n) {\n  // Xoa IP test khoi danh sach da xu ly\n  staticData.blocked =\n    staticData.blocked.filter(ip =>\n      ip !== LAB_RESET.ip\n    );\n\n  // Nho token de chi reset MOT LAN\n  staticData.labResetTokens[LAB_RESET.ip] =\n    LAB_RESET.token;\n}\n\n// ================================================================\n// LOC IP CHUA XU LY\n// ================================================================\n\nconst newIps = [];\n\nfor (const ip of ips) {\n\n  if (!staticData.blocked.includes(ip)) {\n\n    staticData.blocked.push(ip);\n\n    newIps.push(ip);\n  }\n}\n\n// ================================================================\n// KHONG CO IP MOI\n// ================================================================\n\nif (newIps.length === 0) {\n\n  return [{\n    json: {\n      no_new_ip: true,\n      reason: 'IP_ALREADY_PROCESSED',\n      attack_type: 'BRUTE_FORCE',\n      blocked_ips: staticData.blocked\n    }\n  }];\n}\n\n// ================================================================\n// CO IP CAN XU LY\n// ================================================================\n\nreturn newIps.map(ip => ({\n\n  json: {\n\n    no_new_ip: false,\n\n    ip,\n\n    reason:\n      'SSH Brute-force detected by n8n analyzer',\n\n    attack_type:\n      'BRUTE_FORCE',\n\n    telegram_text:\n`⚠️ CẢNH BÁO BẢO MẬT\nPhát hiện tấn công SSH Brute-force\nIP tấn công: ${ip}\nHành động: Đã tự động chặn IP qua Ansible`\n\n  }\n\n}));"
+      },
+      "id": "e5e52ff7-0316-4f0a-8404-a1df6fada569",
+      "name": "Filter New IPs (Session)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -320,
+        -48
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.no_new_ip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "d027aeb7-0da4-4362-8dad-8b1e7b667b39"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "cdb7084b-19f8-49bc-9868-1b2ed4f83a0e",
+      "name": "No New IPs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -96,
+        -48
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "96bdd873-dda2-4c9c-bc2d-26619442d59d",
+      "name": "Stop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        128,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.10.3:8000/block-ip",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Token",
+              "value": "n8n-secret-token-123"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ip\": \"{{ $json.ip }}\",\n  \"reason\": \"{{ $json.reason }}\"\n}",
+        "options": {}
+      },
+      "id": "51164ae5-9d9c-497e-8169-b648ce4831e8",
+      "name": "Call Ansible /block-ip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        736,
+        112
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "53bc231c-8efb-4d8e-a29c-de060a3126b9",
+      "name": "Block Failed",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        944,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "247349952",
+        "text": "={{ $('Filter New IPs (Session)').item.json.telegram_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "589eddb4-95a8-4c40-bd7c-77db39a243c9",
+      "name": "Send Telegram Alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        928,
+        -112
+      ],
+      "webhookId": "8b9977f4-ad3c-4ee5-8870-7ec99adc3ab1",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/BanEvent_Bruteforce.jsonl",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        96,
+        112
+      ],
+      "id": "7f47cd71-6f54-477f-a884-7a53bb963b08",
+      "name": "Read BanEvent_Bruteforce"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        288,
+        112
+      ],
+      "id": "f7b4d83e-0d25-4e72-ae89-b82a08378baf",
+      "name": "Extract Event Text"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// WF-BLOCK-BRUTE - FIND ANALYZER EVENT\n// Match IP tu BanIP_Bruteforce voi event BRUTE_FORCE moi nhat\n// ================================================================\n\n// IP vua duoc Filter New IPs cho phep xu ly\nconst block = $('Filter New IPs (Session)').item.json;\nconst ip = String(block.ip || '').trim();\n\n// Noi dung BanEvent_Bruteforce.jsonl\nconst text = $('Extract Event Text').first()?.json?.data || '';\n\nif (!ip) {\n  throw new Error('Khong tim thay IP tu Filter New IPs (Session)');\n}\n\n// Doc tung dong JSONL\nconst events = text\n  .split(/\\r?\\n/)\n  .map(line => line.trim())\n  .filter(Boolean)\n  .map(line => {\n    try {\n      return JSON.parse(line);\n    } catch {\n      return null;\n    }\n  })\n  .filter(event =>\n    event &&\n    event.src_ip === ip &&\n    event.event_type === 'BRUTE_FORCE'\n  )\n  .sort(\n    (a, b) =>\n      Number(b.analyzer_detected_at_ms || 0) -\n      Number(a.analyzer_detected_at_ms || 0)\n  );\n\n// Lay event BRUTE_FORCE moi nhat cua IP\nconst event = events[0] || null;\n\n// Neu khong tim thay metadata van cho phep xu ly block\nif (!event) {\n  return [{\n    json: {\n      ...block,\n      metrics_found: false,\n      event_id: null,\n      analyzer_detected_at_ms: null,\n      analyzer_detected_at: null,\n      source_event_at_ms: null,\n      source_event_at: null\n    }\n  }];\n}\n\n// Co event -> mang timestamp tu WF-ANALYZER sang\nreturn [{\n  json: {\n    ...block,\n\n    metrics_found: true,\n\n    event_id: event.event_id,\n\n    scenario:\n      event.scenario || 'BLOCK_BRUTE',\n\n    metric:\n      event.metric ?? null,\n\n    // t2 - Analyzer phat hien vuot nguong\n    analyzer_detected_at_ms:\n      event.analyzer_detected_at_ms,\n\n    analyzer_detected_at:\n      event.analyzer_detected_at,\n\n    // Moc log threshold - giu lai neu sau nay can nghien cuu\n    source_event_at_ms:\n      event.source_event_at_ms ?? null,\n\n    source_event_at:\n      event.source_event_at ?? null,\n\n    source_to_analyzer_ms:\n      event.source_to_analyzer_ms ?? null\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        512,
+        112
+      ],
+      "id": "0dc861d4-7b84-4c72-9083-c6fcec0662bb",
+      "name": "Find Analyzer Event"
+    },
+    {
+      "parameters": {
+        "jsCode": "const context = $('Find Analyzer Event').item.json;\n\nconst start = Number(context.analyzer_detected_at_ms);\nconst end = Date.now();\n\nif (!Number.isFinite(start)) {\n  throw new Error('Khong tim thay analyzer_detected_at_ms');\n}\n\nconst totalMs = end - start;\n\nreturn [{\n  json: {\n    ...context,\n\n    status: 'success',\n\n    processing_started_at_ms: start,\n    processing_started_at: context.analyzer_detected_at,\n\n    processing_finished_at_ms: end,\n    processing_finished_at: new Date(end).toISOString(),\n\n    total_processing_ms: totalMs,\n    total_processing_seconds:\n      Number((totalMs / 1000).toFixed(3))\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1136,
+        -112
+      ],
+      "id": "c544a6ed-d6a2-4eac-92e6-87d94bd34277",
+      "name": "End Processing Timer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// PREPARE METRICS - BLOCK_BRUTE\n// KPI: Analyzer detected -> Ansible success\n// ================================================================\n\nconst metric = {\n  schema_version: 1,\n\n  scenario: 'BLOCK_BRUTE',\n  event_id: $json.event_id || null,\n\n  ip: $json.ip,\n  attack_type: $json.attack_type || 'BRUTE_FORCE',\n  status: $json.status || 'success',\n\n  // Moc bat dau: WF-ANALYZER phat hien\n  analyzer_detected_at_ms: $json.analyzer_detected_at_ms,\n  analyzer_detected_at: $json.analyzer_detected_at,\n\n  // Moc ket thuc: Ansible success\n  processing_finished_at_ms: $json.processing_finished_at_ms,\n  processing_finished_at: $json.processing_finished_at,\n\n  // KPI chinh\n  total_processing_ms: $json.total_processing_ms,\n  total_processing_seconds: $json.total_processing_seconds\n};\n\nreturn [{\n  json: {\n    ...$json,\n    metrics_content: JSON.stringify(metric) + '\\n'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        -112
+      ],
+      "id": "88659afb-837d-457d-8f1c-c95f05fa92e7",
+      "name": "Prepare Metrics"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "metrics_content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1552,
+        -112
+      ],
+      "id": "6cea18cb-f3a9-42a5-9d5b-6ffad0e54fb0",
+      "name": "Convert to File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl",
+        "options": {
+          "append": true
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1760,
+        -112
+      ],
+      "id": "27f5869c-49d4-419c-a057-ab52cffb038b",
+      "name": "Write Metrics"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 10s": {
+      "main": [
+        [
+          {
+            "node": "Read BanIP_Bruteforce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BanIP_Bruteforce": {
+      "main": [
+        [
+          {
+            "node": "Extract Ban Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Ban Text": {
+      "main": [
+        [
+          {
+            "node": "Filter New IPs (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New IPs (Session)": {
+      "main": [
+        [
+          {
+            "node": "No New IPs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No New IPs?": {
+      "main": [
+        [
+          {
+            "node": "Stop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read BanEvent_Bruteforce",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Ansible /block-ip": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Block Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "End Processing Timer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BanEvent_Bruteforce": {
+      "main": [
+        [
+          {
+            "node": "Extract Event Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Event Text": {
+      "main": [
+        [
+          {
+            "node": "Find Analyzer Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Analyzer Event": {
+      "main": [
+        [
+          {
+            "node": "Call Ansible /block-ip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "End Processing Timer": {
+      "main": [
+        [
+          {
+            "node": "Prepare Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metrics": {
+      "main": [
+        [
+          {
+            "node": "Convert to File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Convert to File": {
+      "main": [
+        [
+          {
+            "node": "Write Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Metrics": {
+      "main": [
+        [
+          {
+            "node": "Block OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "87c34c16-4dd3-4934-8aae-f62245897624",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "pXojJC3ixU5VYRWQ",
+  "tags": []
+}
