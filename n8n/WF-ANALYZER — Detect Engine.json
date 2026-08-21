@@ -1,5 +1,5 @@
 {
-  "name": "WF-ANALYZER — Detect + Dedupe + Ghi Ban & Audit + Route DHCP",
+  "name": "WF-ANALYZER — Detect + Dedupe + Log & Audit + Route DHCP",
   "nodes": [
     {
       "parameters": {
@@ -52,7 +52,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ================================================================\n// WF-ANALYZER — thay hoan toan pf_analyzer.py (co SESSION/static data)\n// + tach rieng dong DHCP de chuyen sang WF-DHCP-WATCH (khong doc file rieng nua)\n// ================================================================\n// Doc pfsense.log (da GOP ca dhcpd, khong con dhcp.log rieng) -> engine\n// nguong cho BRUTE_FORCE/PORT_SCAN/CONN_FLOOD, dong thoi tach dong DHCP\n// ra 1 item rieng de goi WF-DHCP-WATCH qua Execute Workflow (thay vi\n// WF-DHCP-WATCH tu doc file dhcp.log nhu truoc).\n// DEDUPE ban qua static data (nhu _banned). $getWorkflowStaticData('global')\n// = \"session\" ben vung giua cac lan chay.\n\nconst content = $('Extract Text').first().json.data || '';\nconst rawLines = content.split('\\n').filter(l => l.trim());\n\nconst INTERNAL_NETS = ['192.168.10.','192.168.11.','192.168.12.','192.168.20.'];\nconst IGNORE_PREFIXES = ['169.254.','224.','239.','255.','0.','127.'];\nconst IGNORE_EXACT = ['192.168.183.1','192.168.10.1'];\nconst THRESHOLDS = {\n  BRUTE_FORCE:{count:5,window:60}, PORT_SCAN:{distinctPorts:15,window:10},\n  CONN_FLOOD:{count:100,window:10}, DDOS_SPREAD:{distinctIps:20,window:10},\n};\nconst isInternal = ip => ip && INTERNAL_NETS.some(n=>ip.startsWith(n));\nconst shouldIgnore = ip => !ip || IGNORE_EXACT.includes(ip) || IGNORE_PREFIXES.some(p=>ip.startsWith(p));\nconst pickAttacker = (s,d) => (s&&!isInternal(s))?s:((d&&!isInternal(d))?d:(s||d));\n\n// --- Nhan dien dong DHCP (chuyen logic tu pf_collector.py cu sang day) ---\nconst DHCP_KEYWORDS = ['DHCPDISCOVER','DHCPREQUEST','DHCPOFFER','DHCPACK','DHCPNAK','DHCPDECLINE','DHCPRELEASE','DHCPINFORM'];\nfunction isDhcpLine(raw){\n  const low = raw.toLowerCase();\n  if (low.includes('dhcpd')) return true;\n  return DHCP_KEYWORDS.some(k => raw.includes(k));\n}\n\nconst RE_ANY_IP=/\\b(\\d{1,3}(?:\\.\\d{1,3}){3})\\b/g;\nconst RE_TCP=/,tcp,\\d+,(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d+),(\\d+),[^,]*,([A-Z]*)/;\nconst RE_SSH=/Failed password for (?:invalid user )?(\\S+) from (\\d{1,3}(?:\\.\\d{1,3}){3}) port (\\d+)/;\n\nfunction extractSignal(raw){\n  const low=raw.toLowerCase();\n  const a=raw.match(RE_SSH);\n  if(a){const ip=a[2]; if(shouldIgnore(ip)||isInternal(ip))return null; return {kind:'auth_fail',src_ip:ip,dst_port:22};}\n  if(low.includes('filterlog')&&(low.includes(',block,')||low.includes(',pass,'))){\n    const ips=[...raw.matchAll(RE_ANY_IP)].map(m=>m[1]);\n    if(ips.length<2)return null;\n    const att=pickAttacker(ips[0],ips[1]);\n    if(isInternal(att)||shouldIgnore(att))return null;\n    const t=raw.match(RE_TCP); let dp=null,fl=null;\n    if(t){dp=parseInt(t[4],10);fl=t[5];}\n    return {kind:fl==='S'?'syn':'fw_block',src_ip:att,dst_port:dp};\n  }\n  return null;\n}\nconst nowFrom=l=>{const tb=l.indexOf('\\t'); if(tb<0)return Date.now()/1000; const t=Date.parse(l.slice(0,tb)); return isNaN(t)?Date.now()/1000:t/1000;};\n\n// Gom event theo IP (BRUTE/SCAN/FLOOD) + tach rieng dong DHCP sang mot mang khac\nconst events={};\nconst dhcpLines=[];\nfor(const line of rawLines){\n  const tb=line.indexOf('\\t'); const raw=tb>=0?line.slice(tb+1):line; const now=nowFrom(line);\n\n  if(isDhcpLine(raw)){\n    dhcpLines.push(line);   // giu nguyen ca timestamp; WF-DHCP-WATCH se tu parse nhu truoc\n    continue;                // dong DHCP khong tham gia engine nguong bao mat\n  }\n\n  const sig=extractSignal(raw); if(!sig)continue;\n  (events[sig.src_ip]=events[sig.src_ip]||[]).push({ts:now,port:sig.dst_port,kind:sig.kind});\n}\nconst nowMax=rawLines.length?nowFrom(rawLines[rawLines.length-1]):Date.now()/1000;\nconst cntW=(l,w,k,p)=>l.filter(e=>(nowMax-e.ts)<=w&&(!k||e.kind===k)&&(p===undefined||e.port===p)).length;\nconst dportsW=(l,w,k)=>{const s=new Set();l.forEach(e=>{if((nowMax-e.ts)<=w&&(!k||e.kind===k)&&e.port!=null)s.add(e.port);});return s.size;};\n\n// ===== XET NGUONG (thu tu moi: PORT_SCAN truoc CONN_FLOOD) =====\nconst detections=[];\nfor(const ip of Object.keys(events)){\n  const l=events[ip]; let f=null;\n\n  // 1) BRUTE_FORCE: nhieu lan dang nhap sai cung 1 port\n  const af=l.filter(e=>e.kind==='auth_fail');\n  if(af.length){\n    const bp={}; af.forEach(e=>bp[e.port]=(bp[e.port]||0)+1);\n    for(const p of Object.keys(bp)){\n      const c=cntW(l,THRESHOLDS.BRUTE_FORCE.window,'auth_fail',Number(p));\n      if(c>=THRESHOLDS.BRUTE_FORCE.count){f={type:'BRUTE_FORCE',metric:c};break;}\n    }\n  }\n\n  // 2) PORT_SCAN (xet TRUOC): 1 IP cham NHIEU PORT khac nhau -> la scan (du nhanh)\n  if(!f){\n    const d=dportsW(l,THRESHOLDS.PORT_SCAN.window,'syn')+dportsW(l,THRESHOLDS.PORT_SCAN.window,'fw_block');\n    if(d>=THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'PORT_SCAN',metric:d};\n  }\n\n  // 3) CONN_FLOOD (DoS): volume cao NHUNG dong vao IT port (<15) -> flood, khong phai scan\n  if(!f){\n    const t=cntW(l,THRESHOLDS.CONN_FLOOD.window);\n    const dp=dportsW(l,THRESHOLDS.CONN_FLOOD.window);\n    if(t>=THRESHOLDS.CONN_FLOOD.count && dp<THRESHOLDS.PORT_SCAN.distinctPorts)f={type:'CONN_FLOOD',metric:t};\n  }\n\n  if(f)detections.push({src_ip:ip,event_type:f.type,metric:f.metric});\n}\n\n// ===== DEDUPE qua SESSION (static data) — giong _banned =====\nconst staticData = $getWorkflowStaticData('global');\nstaticData.banned = staticData.banned || {PORT_SCAN:[],BRUTE_FORCE:[],CONN_FLOOD:[]};\n\nconst BAN_MAP={PORT_SCAN:'BanIP_Scanport.txt',BRUTE_FORCE:'BanIP_Bruteforce.txt',CONN_FLOOD:'BanIP_DDOS.txt'};\nconst newBans=[];\nfor(const d of detections){\n  const list = staticData.banned[d.event_type] || (staticData.banned[d.event_type]=[]);\n  if(!list.includes(d.src_ip)){\n    list.push(d.src_ip);\n    newBans.push({...d, ban_file:BAN_MAP[d.event_type]});\n  }\n}\n\n// ===== Gom theo file de ghi =====\nconst byFile={};\nfor(const b of newBans){ (byFile[b.ban_file]=byFile[b.ban_file]||[]).push(b); }\n\nconst out=[];\nfor(const file of Object.keys(byFile)){\n  const items=byFile[file];\n  out.push({ json:{\n    item_type: 'ban',\n    ban_file: file,\n    ips: items.map(i=>i.src_ip),\n    ban_content: items.map(i=>i.src_ip).join('\\n') + '\\n',\n    audit_content: items.map(i=>JSON.stringify({\n      ts:new Date().toISOString(), src_ip:i.src_ip,\n      event_type:i.event_type, metric:i.metric\n    })).join('\\n') + '\\n',\n    count: items.length,\n  }});\n}\n\n// ===== Gom dong DHCP thanh 1 item rieng, chuyen sang WF-DHCP-WATCH =====\nif(dhcpLines.length > 0){\n  out.push({ json:{\n    item_type: 'dhcp_batch',\n    dhcp_content: dhcpLines.join('\\n') + '\\n',\n    dhcp_count: dhcpLines.length,\n  }});\n}\n\nif(out.length===0){\n  return [{ json:{ no_new_ban:true, scanned:rawLines.length, total_detections:detections.length } }];\n}\nreturn out;"
+        "jsCode": "// ================================================================\n// WF-ANALYZER V4 - PORT_SCAN + BRUTE_FORCE + DHCP + Metrics\n// - BRUTE_FORCE bat theo 2 cach:\n//     (a) SSH auth log \"Failed password\"   (khi port 22 duoc allow)\n//     (b) Firewall SYN flood vao 1 port    (khi hydra bi firewall block) <- MOI\n// - Dedupe INCIDENT cho ca BanIP lan BanEvent (2 lop)\n// - LUU Y: staticData chi persist khi workflow ACTIVE chay bang trigger\n// ================================================================\n\nconst content = $('Extract Text').first()?.json?.data || '';\nconst rawLines = content.split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\n\n// ---------------- CAU HINH ----------------\nconst INTERNAL_NETS = ['192.168.10.', '192.168.11.', '192.168.12.', '192.168.20.'];\nconst IGNORE_PREFIXES = ['169.254.', '224.', '239.', '255.', '0.', '127.'];\nconst IGNORE_EXACT = ['192.168.183.1', '192.168.10.1'];\n\nconst THRESHOLDS = {\n  BRUTE_FORCE: { count: 5, window: 60 },     // SSH auth log\n  CONN_FLOOD: { count: 8, window: 60 },      // MOI: SYN dồn vào 1 port (hydra bị block)\n  PORT_SCAN: { distinctPorts: 15, window: 10 },\n};\n\n// Im lang lau hon nguong nay -> incident moi\nconst INCIDENT_QUIET_MS = { PORT_SCAN: 20000, BRUTE_FORCE: 70000 };\n\nconst BAN_FILE_MAP = { PORT_SCAN: 'BanIP_Scanport.txt', BRUTE_FORCE: 'BanIP_Bruteforce.txt' };\nconst EVENT_FILE_MAP = { PORT_SCAN: 'BanEvent_Scanport.jsonl', BRUTE_FORCE: 'BanEvent_Bruteforce.jsonl' };\nconst SCENARIO_MAP = { PORT_SCAN: 'BLOCK_SCAN', BRUTE_FORCE: 'BLOCK_BRUTE' };\nconst EVENT_PREFIX_MAP = { PORT_SCAN: 'SCAN', BRUTE_FORCE: 'BRUTE' };\n\n// ---------------- DHCP ----------------\nconst DHCP_KEYWORDS = ['DHCPDISCOVER','DHCPREQUEST','DHCPOFFER','DHCPACK','DHCPNAK','DHCPDECLINE','DHCPRELEASE','DHCPINFORM'];\nconst isDhcpLine = raw => raw.toLowerCase().includes('dhcpd') || DHCP_KEYWORDS.some(k => raw.includes(k));\n\n// ---------------- REGEX ----------------\nconst RE_ANY_IP = /\\b(\\d{1,3}(?:\\.\\d{1,3}){3})\\b/g;\nconst RE_TCP = /,tcp,\\d+,(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d{1,3}(?:\\.\\d{1,3}){3}),(\\d+),(\\d+),[^,]*,([A-Z]*)/;\nconst RE_SSH = /Failed password for (?:invalid user )?(\\S+) from (\\d{1,3}(?:\\.\\d{1,3}){3}) port (\\d+)/;\n\n// ---------------- HELPERS ----------------\nconst isInternal = ip => Boolean(ip && INTERNAL_NETS.some(net => ip.startsWith(net)));\nconst shouldIgnore = ip => !ip || IGNORE_EXACT.includes(ip) || IGNORE_PREFIXES.some(p => ip.startsWith(p));\nconst pickAttacker = (src, dst) => (src && !isInternal(src)) ? src : (dst && !isInternal(dst)) ? dst : (src || dst);\n\nfunction timestampFromLine(line) {\n  const tab = line.indexOf('\\t');\n  if (tab < 0) return Date.now() / 1000;\n  const parsed = Date.parse(line.slice(0, tab).trim());\n  return Number.isNaN(parsed) ? Date.now() / 1000 : parsed / 1000;\n}\n\nfunction extractSignal(raw) {\n  const lower = raw.toLowerCase();\n\n  // SSH brute force (khi port 22 allow)\n  const ssh = raw.match(RE_SSH);\n  if (ssh) {\n    const ip = ssh[2];\n    if (shouldIgnore(ip) || isInternal(ip)) return null;\n    return { kind: 'auth_fail', src_ip: ip, dst_port: 22 };\n  }\n\n  // pfSense filterlog\n  if (!lower.includes('filterlog') || (!lower.includes(',block,') && !lower.includes(',pass,'))) return null;\n\n  const ips = [...raw.matchAll(RE_ANY_IP)].map(m => m[1]);\n  if (ips.length < 2) return null;\n\n  const attackerIp = pickAttacker(ips[0], ips[1]);\n  if (shouldIgnore(attackerIp) || isInternal(attackerIp)) return null;\n\n  const tcp = raw.match(RE_TCP);\n  const dstPort = tcp ? Number.parseInt(tcp[4], 10) : null;\n  const flags = tcp?.[5] || null;\n\n  return { kind: flags === 'S' ? 'syn' : 'fw_block', src_ip: attackerIp, dst_port: dstPort };\n}\n\nfunction eventsInWindow(list, refTs, seconds, kinds = null) {\n  const allowed = kinds ? new Set(Array.isArray(kinds) ? kinds : [kinds]) : null;\n  return list.filter(e => {\n    const age = refTs - e.ts;\n    return age >= 0 && age <= seconds && (!allowed || allowed.has(e.kind));\n  });\n}\n\nconst countDistinctPorts = list => new Set(list.filter(e => e.port != null).map(e => e.port)).size;\n\n// MOI: port bi đập nhieu nhat -> { port, count }\nfunction topPort(list) {\n  const byPort = {};\n  for (const e of list) if (e.port != null) byPort[e.port] = (byPort[e.port] || 0) + 1;\n  let best = null;\n  for (const [port, count] of Object.entries(byPort)) if (!best || count > best.count) best = { port: Number(port), count };\n  return best;\n}\n\nfunction countThresholdCrossingMs(list, threshold) {\n  if (list.length < threshold) return null;\n  const sorted = [...list].sort((a, b) => a.ts - b.ts);\n  return Math.round(sorted[threshold - 1].ts * 1000);\n}\n\nfunction distinctPortCrossingMs(list, threshold) {\n  const sorted = [...list].sort((a, b) => a.ts - b.ts);\n  const ports = new Set();\n  for (const e of sorted) {\n    if (e.port == null) continue;\n    ports.add(e.port);\n    if (ports.size >= threshold) return Math.round(e.ts * 1000);\n  }\n  return null;\n}\n\nfunction latestEventMs(list) {\n  let latest = null;\n  for (const e of list) {\n    if (!Number.isFinite(e.ts)) continue;\n    const ms = Math.round(e.ts * 1000);\n    if (latest === null || ms > latest) latest = ms;\n  }\n  return latest;\n}\n\n// ---------------- PARSE LOG ----------------\nconst securityEventsByIp = {};\nconst dhcpLines = [];\nlet referenceTimestamp = 0;\n\nfor (const line of rawLines) {\n  const tab = line.indexOf('\\t');\n  const raw = tab >= 0 ? line.slice(tab + 1) : line;\n  const ts = timestampFromLine(line);\n  if (ts > referenceTimestamp) referenceTimestamp = ts;\n\n  if (isDhcpLine(raw)) { dhcpLines.push(line); continue; }\n\n  const signal = extractSignal(raw);\n  if (!signal) continue;\n\n  (securityEventsByIp[signal.src_ip] ||= []).push({ ts, port: signal.dst_port, kind: signal.kind });\n}\n\nif (!referenceTimestamp) referenceTimestamp = Date.now() / 1000;\n\n// ---------------- DETECT ----------------\nconst analyzerDetectedAtMs = Date.now();  // T1\nconst analyzerDetectedAt = new Date(analyzerDetectedAtMs).toISOString();\nconst detections = [];\n\nfor (const [ip, eventList] of Object.entries(securityEventsByIp)) {\n  let finding = null;\n\n  // (a) BRUTE FORCE - SSH auth log\n  const authEvents = eventsInWindow(eventList, referenceTimestamp, THRESHOLDS.BRUTE_FORCE.window, 'auth_fail');\n  if (authEvents.length >= THRESHOLDS.BRUTE_FORCE.count) {\n    finding = {\n      type: 'BRUTE_FORCE',\n      metric: authEvents.length,\n      source_event_at_ms: countThresholdCrossingMs(authEvents, THRESHOLDS.BRUTE_FORCE.count),\n      _last_signal_at_ms: latestEventMs(authEvents),\n    };\n  }\n\n  // (b) BRUTE FORCE - firewall SYN flood vao 1 port (hydra bị block) <- MOI\n  if (!finding) {\n    const connEvents = eventsInWindow(eventList, referenceTimestamp, THRESHOLDS.CONN_FLOOD.window, ['syn', 'fw_block']);\n    const distinct = countDistinctPorts(connEvents);\n    const top = topPort(connEvents);\n    // Chi tinh la brute khi don vao 1 port (distinct < nguong scan), khong phai quet nhieu port\n    if (top && top.count >= THRESHOLDS.CONN_FLOOD.count && distinct < THRESHOLDS.PORT_SCAN.distinctPorts) {\n      const portEvents = connEvents.filter(e => e.port === top.port);\n      finding = {\n        type: 'BRUTE_FORCE',\n        metric: top.count,\n        source_event_at_ms: countThresholdCrossingMs(portEvents, THRESHOLDS.CONN_FLOOD.count),\n        _last_signal_at_ms: latestEventMs(connEvents),\n      };\n    }\n  }\n\n  // PORT SCAN\n  if (!finding) {\n    const scanEvents = eventsInWindow(eventList, referenceTimestamp, THRESHOLDS.PORT_SCAN.window, ['syn', 'fw_block']);\n    const distinctPorts = countDistinctPorts(scanEvents);\n    if (distinctPorts >= THRESHOLDS.PORT_SCAN.distinctPorts) {\n      finding = {\n        type: 'PORT_SCAN',\n        metric: distinctPorts,\n        source_event_at_ms: distinctPortCrossingMs(scanEvents, THRESHOLDS.PORT_SCAN.distinctPorts),\n        _last_signal_at_ms: latestEventMs(scanEvents),\n      };\n    }\n  }\n\n  if (!finding) continue;\n\n  const srcMs = Number(finding.source_event_at_ms);\n  detections.push({\n    src_ip: ip,\n    event_type: finding.type,\n    metric: finding.metric,\n    source_event_at_ms: Number.isFinite(srcMs) ? srcMs : null,                              // T0\n    source_event_at: Number.isFinite(srcMs) ? new Date(srcMs).toISOString() : null,\n    analyzer_detected_at_ms: analyzerDetectedAtMs,                                          // T1\n    analyzer_detected_at: analyzerDetectedAt,\n    source_to_analyzer_ms: Number.isFinite(srcMs) ? analyzerDetectedAtMs - srcMs : null,    // T1-T0\n    _last_signal_at_ms: finding._last_signal_at_ms,  // noi bo, khong dua vao output\n  });\n}\n\n// ---------------- INCIDENT DEDUPE ----------------\nconst staticData = $getWorkflowStaticData('global');\n\nif (staticData.incidentDedupeSchemaVersion !== 2) {\n  staticData.lastDetection = { PORT_SCAN: {}, BRUTE_FORCE: {} };\n  staticData.incidentDedupeSchemaVersion = 2;\n}\nstaticData.lastDetection ||= { PORT_SCAN: {}, BRUTE_FORCE: {} };\nfor (const type of ['PORT_SCAN', 'BRUTE_FORCE']) {\n  const cur = staticData.lastDetection[type];\n  if (!cur || Array.isArray(cur) || typeof cur !== 'object') staticData.lastDetection[type] = {};\n}\ndelete staticData.banned;\n\nconst newEvents = [];\n\nfor (const detection of detections) {\n  const eventType = detection.event_type;\n  const ip = detection.src_ip;\n  const srcMs = Number(detection.source_event_at_ms);\n  const quietMs = INCIDENT_QUIET_MS[eventType] || 60000;\n\n  let lastSignalAtMs = Number(detection._last_signal_at_ms);\n  if (!Number.isFinite(lastSignalAtMs)) lastSignalAtMs = Number.isFinite(srcMs) ? srcMs : analyzerDetectedAtMs;\n\n  staticData.lastDetection[eventType] ||= {};\n  const previous = staticData.lastDetection[eventType][ip];\n\n  let sameIncident = false;\n\n  if (previous && typeof previous === 'object') {\n    const prevSignalMs = Number(previous.last_signal_at_ms);\n    const prevSeenMs = Number(previous.last_seen_at_ms);\n\n    // Lop 1 - theo timestamp trong log\n    if (Number.isFinite(prevSignalMs) && (lastSignalAtMs - prevSignalMs) <= quietMs) sameIncident = true;\n    // Lop 2 - theo wall-clock analyzer (chong timestamp log lech)\n    if (!sameIncident && Number.isFinite(prevSeenMs) && (analyzerDetectedAtMs - prevSeenMs) <= quietMs) sameIncident = true;\n  }\n\n  // Cung incident: KHONG tao event_id / BanIP / BanEvent / Audit / Ansible moi\n  if (sameIncident) {\n    const prevSignalMs = Number(previous.last_signal_at_ms);\n    staticData.lastDetection[eventType][ip] = {\n      ...previous,\n      last_signal_at_ms: Number.isFinite(prevSignalMs) ? Math.max(prevSignalMs, lastSignalAtMs) : lastSignalAtMs,\n      last_seen_at_ms: analyzerDetectedAtMs,\n    };\n    continue;\n  }\n\n  // Incident moi\n  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();\n  const eventId = `${EVENT_PREFIX_MAP[eventType] || 'EVENT'}-${analyzerDetectedAtMs}-${randomPart}`;\n\n  staticData.lastDetection[eventType][ip] = {\n    event_id: eventId,\n    first_detected_at_ms: analyzerDetectedAtMs,\n    last_seen_at_ms: analyzerDetectedAtMs,\n    last_signal_at_ms: lastSignalAtMs,\n  };\n\n  newEvents.push({\n    ...detection,\n    event_id: eventId,\n    scenario: SCENARIO_MAP[eventType],\n    ban_file: BAN_FILE_MAP[eventType],\n    event_queue_file: EVENT_FILE_MAP[eventType],\n  });\n}\n\n// ---------------- OUTPUT ----------------\nconst eventsByFile = {};\nfor (const event of newEvents) (eventsByFile[event.ban_file] ||= []).push(event);\n\nfunction baseRecord(item) {\n  return {\n    schema_version: 1,\n    event_id: item.event_id,\n    scenario: item.scenario,\n    src_ip: item.src_ip,\n    event_type: item.event_type,\n    metric: item.metric,\n    source_event_at_ms: item.source_event_at_ms,\n    source_event_at: item.source_event_at,\n    analyzer_detected_at_ms: item.analyzer_detected_at_ms,\n    analyzer_detected_at: item.analyzer_detected_at,\n    source_to_analyzer_ms: item.source_to_analyzer_ms,\n  };\n}\n\nconst output = [];\n\nfor (const [banFile, items] of Object.entries(eventsByFile)) {\n  output.push({\n    json: {\n      item_type: 'ban',\n      ban_file: banFile,\n      event_queue_file: items[0].event_queue_file,\n      ips: items.map(i => i.src_ip),\n      ban_content: items.map(i => i.src_ip).join('\\n') + '\\n',\n      event_content: items.map(i => JSON.stringify({ ...baseRecord(i), attack_type: i.event_type, status: 'detected' })).join('\\n') + '\\n',\n      audit_content: items.map(i => JSON.stringify({ ...baseRecord(i), record_type: 'security_detection' })).join('\\n') + '\\n',\n      count: items.length,\n    },\n  });\n}\n\nif (dhcpLines.length > 0) {\n  output.push({ json: { item_type: 'dhcp_batch', dhcp_content: dhcpLines.join('\\n') + '\\n', dhcp_count: dhcpLines.length } });\n}\n\nif (output.length === 0) {\n  return [{\n    json: {\n      no_new_ban: true,\n      reason: detections.length > 0 ? 'DETECTION_ALREADY_PROCESSED' : 'NO_ATTACK_DETECTED',\n      scanned: rawLines.length,\n      total_detections: detections.length,\n      new_events: newEvents.length,\n      deduped_count: detections.length - newEvents.length,\n      detected_ips: detections.map(d => d.src_ip),\n      detected_types: detections.map(d => d.event_type),\n      analyzer_checked_at_ms: analyzerDetectedAtMs,\n      analyzer_checked_at: analyzerDetectedAt,\n    },\n  }];\n}\n\nreturn output;"
       },
       "id": "d6d301e4-e61b-454e-b9fc-f1ea16836d0d",
       "name": "Detect + Dedupe (Session)",
@@ -69,8 +69,8 @@
           "options": {
             "caseSensitive": true,
             "leftValue": "",
-            "typeValidation": "loose",
-            "version": 2
+            "typeValidation": "strict",
+            "version": 1
           },
           "conditions": [
             {
@@ -80,7 +80,8 @@
                 "type": "boolean",
                 "operation": "true",
                 "singleValue": true
-              }
+              },
+              "id": "80034dce-f9da-4062-af67-4bc4599d10a9"
             }
           ],
           "combinator": "and"
@@ -88,7 +89,7 @@
         "options": {}
       },
       "id": "1d5ffa52-044d-4296-b098-14ff49f3574c",
-      "name": "Khong co ban moi?",
+      "name": "No new version?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
@@ -99,12 +100,12 @@
     {
       "parameters": {},
       "id": "fa48fa4b-f76b-49a0-9661-3e0d8b8b3a8e",
-      "name": "Dung (khong co gi)",
+      "name": "Stop (nothing)",
       "type": "n8n-nodes-base.noOp",
       "typeVersion": 1,
       "position": [
         1040,
-        160
+        240
       ]
     },
     {
@@ -114,7 +115,7 @@
             "caseSensitive": true,
             "leftValue": "",
             "typeValidation": "strict",
-            "version": 2
+            "version": 1
           },
           "conditions": [
             {
@@ -123,35 +124,21 @@
               "operator": {
                 "type": "string",
                 "operation": "equals"
-              }
+              },
+              "id": "c72b4e8e-5c81-4cb6-a557-cafcda2e52ea"
             }
           ],
           "combinator": "and"
         },
         "options": {}
       },
-      "id": "c1a2b3c4-1111-4444-8888-000000000001",
-      "name": "La ban hay DHCP?",
+      "id": "389a40f7-ed74-41b4-844c-d6a853fe4f4e",
+      "name": "Static IP or DHCP?",
       "type": "n8n-nodes-base.if",
       "typeVersion": 2,
       "position": [
-        1040,
-        368
-      ]
-    },
-    {
-      "parameters": {
-        "operation": "toText",
-        "sourceProperty": "ban_content",
-        "options": {}
-      },
-      "id": "e37f6c6c-3a26-43a4-bcab-140b145be473",
-      "name": "Ban -> Binary",
-      "type": "n8n-nodes-base.convertToFile",
-      "typeVersion": 1.1,
-      "position": [
-        1264,
-        288
+        1056,
+        560
       ]
     },
     {
@@ -163,12 +150,12 @@
         }
       },
       "id": "eb2bedc6-06b4-43d4-a68f-7758db344846",
-      "name": "Ghi File Ban",
+      "name": "Write Ban File",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1488,
-        288
+        1584,
+        368
       ]
     },
     {
@@ -178,12 +165,27 @@
         "options": {}
       },
       "id": "4eb1215d-4444-4620-9feb-8bc8a01a9fc3",
-      "name": "Audit -> Binary",
+      "name": "Audit → File",
       "type": "n8n-nodes-base.convertToFile",
       "typeVersion": 1.1,
       "position": [
-        1264,
-        448
+        1296,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "ban_content",
+        "options": {}
+      },
+      "id": "e37f6c6c-3a26-43a4-bcab-140b145be473",
+      "name": "Ban List → File",
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1296,
+        368
       ]
     },
     {
@@ -195,42 +197,73 @@
         }
       },
       "id": "b268af8d-6e98-4372-bd10-12577465ddd6",
-      "name": "Ghi Audit Log",
+      "name": "Write Audit Log",
       "type": "n8n-nodes-base.readWriteFile",
       "typeVersion": 1,
       "position": [
-        1488,
-        448
+        1584,
+        544
       ]
     },
     {
       "parameters": {
-        "source": "database",
         "workflowId": {
           "__rl": true,
           "value": "4raA7oAtN5axjmhQ",
           "mode": "list",
-          "cachedResultName": "WF-DHCP-WATCH — Phat hien thiet bi moi -> Telegram (APPROVE/REJECT)"
+          "cachedResultUrl": "/workflow/4raA7oAtN5axjmhQ",
+          "cachedResultName": "WF-DHCP-WATCH — Detect New Device → Telegram (Approve/Reject)"
         },
         "workflowInputs": {
           "mappingMode": "defineBelow",
-          "value": {
-            "dhcp_content": "={{ $json.dhcp_content }}",
-            "dhcp_count": "={{ $json.dhcp_count }}"
-          },
+          "value": {},
           "matchingColumns": [],
-          "schema": []
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": true
         },
         "options": {}
       },
-      "id": "c1a2b3c4-1111-4444-8888-000000000002",
-      "name": "Goi WF-DHCP-WATCH",
+      "id": "04e7c186-764d-44d6-befb-a01aea78dfb6",
+      "name": "Call WF-DHCP-WATCH",
       "type": "n8n-nodes-base.executeWorkflow",
       "typeVersion": 1.2,
       "position": [
-        1264,
-        608
+        976,
+        896
       ]
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "event_content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1296,
+        736
+      ],
+      "id": "9712e6db-4f34-4db5-a2af-1ecda6fb3ef3",
+      "name": "ent → File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "=C:/Users/Administrator/.n8n-files/pflogs/{{ $('Detect + Dedupe (Session)').item.json.event_queue_file }}",
+        "options": {
+          "append": true
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1584,
+        736
+      ],
+      "id": "d6d41072-e4f2-408e-9cb9-5c4a25222f57",
+      "name": "Write Event Queue"
     }
   ],
   "pinData": {},
@@ -272,70 +305,86 @@
       "main": [
         [
           {
-            "node": "Khong co ban moi?",
+            "node": "No new version?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Khong co ban moi?": {
+    "No new version?": {
       "main": [
         [
           {
-            "node": "Dung (khong co gi)",
+            "node": "Stop (nothing)",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "La ban hay DHCP?",
+            "node": "Static IP or DHCP?",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "La ban hay DHCP?": {
+    "Static IP or DHCP?": {
       "main": [
         [
           {
-            "node": "Ban -> Binary",
+            "node": "Ban List → File",
             "type": "main",
             "index": 0
           },
           {
-            "node": "Audit -> Binary",
+            "node": "ent → File",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Audit → File",
             "type": "main",
             "index": 0
           }
         ],
         [
           {
-            "node": "Goi WF-DHCP-WATCH",
+            "node": "Call WF-DHCP-WATCH",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Ban -> Binary": {
+    "Audit → File": {
       "main": [
         [
           {
-            "node": "Ghi File Ban",
+            "node": "Write Audit Log",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Audit -> Binary": {
+    "Ban List → File": {
       "main": [
         [
           {
-            "node": "Ghi Audit Log",
+            "node": "Write Ban File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ent → File": {
+      "main": [
+        [
+          {
+            "node": "Write Event Queue",
             "type": "main",
             "index": 0
           }
@@ -343,7 +392,7 @@
       ]
     }
   },
-  "active": false,
+  "active": true,
   "settings": {
     "executionOrder": "v1",
     "binaryMode": "separate",
@@ -352,7 +401,7 @@
     "callerPolicy": "workflowsFromSameOwner",
     "availableInMCP": false
   },
-  "versionId": "90db457e-8b6b-4b35-af90-95c519b52275",
+  "versionId": "c7b029d7-7276-4515-8744-6ffe7b81f74f",
   "meta": {
     "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
   },
