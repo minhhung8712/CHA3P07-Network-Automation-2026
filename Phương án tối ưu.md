@@ -1,4 +1,4 @@
-# Phương án tối ưu hóa hệ thống SOAR pfSense – n8n – Ansible
+# Phương án tối ưu hóa hệ thống pfSense – n8n – Ansible
 
 **Tài liệu kỹ thuật phục vụ tu chỉnh đề án Thạc sĩ**
 Căn cứ: Bản đánh giá của GVHD, Round 3, ngày 14/08/2026 — Phán quyết `PASS — MINOR REVISION`, tổng điểm 7.525/10.
