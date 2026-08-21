@@ -1,0 +1,765 @@
+{
+  "name": "WF-BLOCK-SCAN — Read Port-Scan Bans → Ansible",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "fee6c0e2-4baa-4524-9990-4657af441963",
+      "name": "Every 10s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1040,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "=C:/Users/Administrator/.n8n-files/pflogs/BanIP_Scanport.txt",
+        "options": {}
+      },
+      "id": "b66d399a-511f-4e0f-874a-acd1ebf9d0dd",
+      "name": "Read BanIP_Scanport",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -848,
+        128
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "71c4f61d-0428-4d53-b537-b238035c4105",
+      "name": "Extract Ban Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        128
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "5d8747a9-a304-4f6a-87fb-8905d84f7445",
+      "name": "Block OK",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1808,
+        160
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// FILTER NEW IPs + LAB RESET\n// Production: van dedupe IP nhu cu\n// Lab: cho phep reset 1 IP de test lai\n// ================================================================\n\nconst content = $('Extract Ban Text').first()?.json?.data || '';\nconst ips = content.split(/\\r?\\n/).map(s => s.trim()).filter(Boolean);\n\nconst staticData = $getWorkflowStaticData('global');\nstaticData.blocked = Array.isArray(staticData.blocked) ? staticData.blocked : [];\nstaticData.labResetTokens = staticData.labResetTokens || {};\n\n// ================================================================\n// LAB RESET\n// Muon test lai cung IP -> chi can doi token\n// ================================================================\n\nconst LAB_RESET = {\n  enabled: true,\n  ip: '192.168.183.133',\n  token: 'scan-test-013'\n};\n\nif (\n  LAB_RESET.enabled &&\n  LAB_RESET.ip &&\n  staticData.labResetTokens[LAB_RESET.ip] !== LAB_RESET.token\n) {\n  // Xoa IP khoi session blocked\n  staticData.blocked = staticData.blocked.filter(ip => ip !== LAB_RESET.ip);\n\n  // Nho token de chi reset 1 lan\n  staticData.labResetTokens[LAB_RESET.ip] = LAB_RESET.token;\n}\n\n// ================================================================\n// LOC IP MOI\n// ================================================================\n\nconst newIps = [];\n\nfor (const ip of ips) {\n  if (!staticData.blocked.includes(ip)) {\n    staticData.blocked.push(ip);\n    newIps.push(ip);\n  }\n}\n\n// ================================================================\n// KHONG CO IP MOI\n// ================================================================\n\nif (newIps.length === 0) {\n  return [{\n    json: {\n      no_new_ip: true,\n      reason: 'IP_ALREADY_PROCESSED',\n      blocked_ips: staticData.blocked\n    }\n  }];\n}\n\n// ================================================================\n// CO IP MOI -> DI NHANH FALSE\n// ================================================================\n\nreturn newIps.map(ip => ({\n  json: {\n    no_new_ip: false,\n    ip,\n    reason: 'PORT_SCAN detected by n8n analyzer',\n    attack_type: 'PORT_SCAN'\n  }\n}));"
+      },
+      "id": "d9a1d9bf-58f3-400b-8220-ea4d96847bdf",
+      "name": "Filter New IPs (Session)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.no_new_ip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "id": "7d018b7a-cf0b-462a-a28d-baca0f871ef8"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b9b2d3a-d2ca-4623-8858-867a6158b253",
+      "name": "No New IPs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.10.3:8000/block-ip",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Token",
+              "value": "n8n-secret-token-123"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ip\": \"{{ $json.ip }}\",\n  \"reason\": \"{{ $json.reason }}\"\n}",
+        "options": {}
+      },
+      "id": "a6379710-76eb-4757-80b4-100af37fe9da",
+      "name": "Call Ansible /block-ip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        592,
+        256
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "7c5e13c9-719a-4c56-b4c8-daa7dba54acd",
+      "name": "Stop",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        -32,
+        -64
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8eb5a6a4-b89f-436f-a97b-5a91d73e0e90",
+      "name": "Block failed -> Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        816,
+        368
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "247349952",
+        "text": "=⚠️ CANH BAO BAO MAT\nPhát hiện tấn công rà quét mạng (Network Scanning)\nIP tấn công: {{ $json.ip }}\nHành động: Đã tự động chặn IP qua Ansible",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        816,
+        160
+      ],
+      "id": "29c226c5-9938-4896-8adb-dee1d55713a5",
+      "name": "Send Telegram Alert",
+      "webhookId": "488a8d02-ea8a-4e44-bb7d-9dc997745cc2",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// END-TO-END TIMER\n// WF-ANALYZER detected -> Ansible success\n// ================================================================\n\nconst context = $('Find Analyzer Event').item.json;\n\nconst start = Number(context.analyzer_detected_at_ms);\nconst end = Date.now();\n\nif (!Number.isFinite(start)) {\n  throw new Error('Khong tim thay analyzer_detected_at_ms');\n}\n\nconst totalMs = end - start;\n\nreturn [{\n  json: {\n    ...context,\n\n    status: 'success',\n\n    processing_started_at_ms: start,\n    processing_started_at: context.analyzer_detected_at,\n\n    processing_finished_at_ms: end,\n    processing_finished_at: new Date(end).toISOString(),\n\n    total_processing_ms: totalMs,\n    total_processing_seconds: Number((totalMs / 1000).toFixed(3))\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1024,
+        160
+      ],
+      "id": "a8dd317a-147d-49c0-8ae5-525e4715d9e8",
+      "name": "End Processing Timer"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================================================================\n// PREPARE METRICS - BLOCK_SCAN\n// KPI: Analyzer detected -> Ansible success\n// ================================================================\n\nconst metric = {\n  schema_version: 1,\n\n  scenario: 'BLOCK_SCAN',\n  event_id: $json.event_id || null,\n\n  ip: $json.ip,\n  attack_type: $json.attack_type || 'PORT_SCAN',\n  status: $json.status || 'success',\n\n  // Moc bat dau: WF-ANALYZER phat hien\n  analyzer_detected_at_ms: $json.analyzer_detected_at_ms,\n  analyzer_detected_at: $json.analyzer_detected_at,\n\n  // Moc ket thuc: Ansible success\n  processing_finished_at_ms: $json.processing_finished_at_ms,\n  processing_finished_at: $json.processing_finished_at,\n\n  // KPI chinh\n  total_processing_ms: $json.total_processing_ms,\n  total_processing_seconds: $json.total_processing_seconds\n};\n\nreturn [{\n  json: {\n    ...$json,\n    metrics_content: JSON.stringify(metric) + '\\n'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1232,
+        160
+      ],
+      "id": "da7396b0-92bf-45e9-8368-55e823fde018",
+      "name": "Prepare Metrics"
+    },
+    {
+      "parameters": {
+        "operation": "toText",
+        "sourceProperty": "metrics_content",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.convertToFile",
+      "typeVersion": 1.1,
+      "position": [
+        1440,
+        160
+      ],
+      "id": "66d7bc05-e27c-4b82-b862-ba7bb553df2b",
+      "name": "Metrics → File"
+    },
+    {
+      "parameters": {
+        "operation": "write",
+        "fileName": "C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl",
+        "options": {
+          "append": true
+        }
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        1648,
+        160
+      ],
+      "id": "f5532147-2a21-4ade-a4ae-73d5baaba0d0",
+      "name": "Write Metrics"
+    },
+    {
+      "parameters": {
+        "fileSelector": "C:/Users/Administrator/.n8n-files/pflogs/BanEvent_Scanport.jsonl",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1.1,
+      "position": [
+        -32,
+        256
+      ],
+      "id": "5bd2e895-a197-4e73-b706-691de9605391",
+      "name": "Read BanEvent_Scanport"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        176,
+        256
+      ],
+      "id": "d4e0d6ad-868d-4c4c-b950-b8e3b74290f0",
+      "name": "Extract Event Text"
+    },
+    {
+      "parameters": {
+        "jsCode": "const ip = $('Filter New IPs (Session)').item.json.ip;\nconst text = $('Extract Event Text').first()?.json?.data || '';\n\nconst events = text\n  .split(/\\r?\\n/)\n  .map(x => x.trim())\n  .filter(Boolean)\n  .map(line => {\n    try { return JSON.parse(line); }\n    catch { return null; }\n  })\n  .filter(e =>\n    e &&\n    e.src_ip === ip &&\n    e.event_type === 'PORT_SCAN'\n  )\n  .sort((a, b) =>\n    Number(b.analyzer_detected_at_ms || 0) -\n    Number(a.analyzer_detected_at_ms || 0)\n  );\n\nconst event = events[0];\n\nif (!event) {\n  return [{\n    json: {\n      ...$('Filter New IPs (Session)').item.json,\n      metrics_found: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...$('Filter New IPs (Session)').item.json,\n\n    metrics_found: true,\n\n    event_id: event.event_id,\n\n    analyzer_detected_at_ms:\n      event.analyzer_detected_at_ms,\n\n    analyzer_detected_at:\n      event.analyzer_detected_at,\n\n    source_event_at_ms:\n      event.source_event_at_ms,\n\n    source_event_at:\n      event.source_event_at\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        384,
+        256
+      ],
+      "id": "5fc3cfba-cca1-4a8e-95ce-2f0909f14cbf",
+      "name": "Find Analyzer Event"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 10s": {
+      "main": [
+        [
+          {
+            "node": "Read BanIP_Scanport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BanIP_Scanport": {
+      "main": [
+        [
+          {
+            "node": "Extract Ban Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Ban Text": {
+      "main": [
+        [
+          {
+            "node": "Filter New IPs (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filter New IPs (Session)": {
+      "main": [
+        [
+          {
+            "node": "No New IPs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No New IPs?": {
+      "main": [
+        [
+          {
+            "node": "Stop",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Read BanEvent_Scanport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call Ansible /block-ip": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Block failed -> Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram Alert": {
+      "main": [
+        [
+          {
+            "node": "End Processing Timer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "End Processing Timer": {
+      "main": [
+        [
+          {
+            "node": "Prepare Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Metrics": {
+      "main": [
+        [
+          {
+            "node": "Metrics → File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Metrics → File": {
+      "main": [
+        [
+          {
+            "node": "Write Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Write Metrics": {
+      "main": [
+        [
+          {
+            "node": "Block OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BanEvent_Scanport": {
+      "main": [
+        [
+          {
+            "node": "Extract Event Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Event Text": {
+      "main": [
+        [
+          {
+            "node": "Find Analyzer Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Analyzer Event": {
+      "main": [
+        [
+          {
+            "node": "Call Ansible /block-ip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "23dff064-f46b-4b03-82ab-910183f9e9fd",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "OehWEViKfx2eOv31",
+  "tags": []
+}{
+  "name": "WF-BLOCK-SCAN — Doc Ban -> Goi Ansible",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "seconds",
+              "secondsInterval": 10
+            }
+          ]
+        }
+      },
+      "id": "fee6c0e2-4baa-4524-9990-4657af441963",
+      "name": "Every 10s",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        -1040,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "fileSelector": "=C:/Users/Administrator/.n8n-files/pflogs/BanIP_Scanport.txt",
+        "options": {}
+      },
+      "id": "b66d399a-511f-4e0f-874a-acd1ebf9d0dd",
+      "name": "Read BanIP_Scanport",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [
+        -848,
+        128
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "text",
+        "options": {}
+      },
+      "id": "71c4f61d-0428-4d53-b537-b238035c4105",
+      "name": "Extract Ban Text",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1,
+      "position": [
+        -640,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ===== Doc file ban + loc IP MOI (chua goi Ansible) =====\n// Dung static data (session) de nho IP da goi block -> khong goi trung.\n\nconst content = $('Extract Ban Text').first().json.data || '';\nconst ips = content.split('\\n').map(s => s.trim()).filter(s => s);\n\n// Session: nho IP da goi Ansible\nconst staticData = $getWorkflowStaticData('global');\nstaticData.blocked = staticData.blocked || [];\n\nconst newIps = [];\nfor (const ip of ips) {\n  if (!staticData.blocked.includes(ip)) {\n    staticData.blocked.push(ip);\n    newIps.push(ip);\n  }\n}\n\n// Neu khong co IP moi -> tra ve rong (khong goi Ansible)\nif (newIps.length === 0) {\n  return [{ json: { no_new_ip: true } }];\n}\n// Moi IP moi -> 1 item de goi Ansible\nreturn newIps.map(ip => ({ json: {\n  ip: ip,\n  reason: 'PORT_SCAN detected by n8n analyzer',\n  attack_type: 'PORT_SCAN',\n}}));\n"
+      },
+      "id": "d9a1d9bf-58f3-400b-8220-ea4d96847bdf",
+      "name": "Loc IP Moi (Session)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -448,
+        128
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.no_new_ip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6b9b2d3a-d2ca-4623-8858-867a6158b253",
+      "name": "Khong co IP moi?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -224,
+        128
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "7c5e13c9-719a-4c56-b4c8-daa7dba54acd",
+      "name": "Dung",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://192.168.10.3:8000/block-ip",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "X-API-Token",
+              "value": "n8n-secret-token-123"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"ip\": \"{{ $json.ip }}\",\n  \"reason\": \"{{ $json.reason }}\"\n}",
+        "options": {}
+      },
+      "id": "a6379710-76eb-4757-80b4-100af37fe9da",
+      "name": "Goi Ansible /block-ip",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        0,
+        224
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {},
+      "id": "5d8747a9-a304-4f6a-87fb-8905d84f7445",
+      "name": "Block OK",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        224,
+        144
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "8eb5a6a4-b89f-436f-a97b-5a91d73e0e90",
+      "name": "Block Loi -> Alert",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        224,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "247349952",
+        "text": "=⚠️ CANH BAO BAO MAT\nPhát hiện tấn công rà quét mạng (Network Scanning)\nIP tan cong: {{ $json.ip }}\nHanh dong: Da tu dong chan IP qua Ansible",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        -32,
+        464
+      ],
+      "id": "29c226c5-9938-4896-8adb-dee1d55713a5",
+      "name": "Send a text message",
+      "webhookId": "488a8d02-ea8a-4e44-bb7d-9dc997745cc2",
+      "credentials": {
+        "telegramApi": {
+          "id": "c6glCn4dTs6D8N5J",
+          "name": "2026v1bot"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Every 10s": {
+      "main": [
+        [
+          {
+            "node": "Read BanIP_Scanport",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Read BanIP_Scanport": {
+      "main": [
+        [
+          {
+            "node": "Extract Ban Text",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Ban Text": {
+      "main": [
+        [
+          {
+            "node": "Loc IP Moi (Session)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loc IP Moi (Session)": {
+      "main": [
+        [
+          {
+            "node": "Khong co IP moi?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Khong co IP moi?": {
+      "main": [
+        [
+          {
+            "node": "Dung",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send a text message",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Goi Ansible /block-ip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Goi Ansible /block-ip": {
+      "main": [
+        [
+          {
+            "node": "Block OK",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Block Loi -> Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send a text message": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "eb3afccf-3697-4c48-9380-8e33ecb3eef0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "1bbf620ad8d6d3cacc4f6adeeb88d759b0833f29917f546627c038ea11c44325"
+  },
+  "id": "OehWEViKfx2eOv31",
+  "tags": []
+}
