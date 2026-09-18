@@ -1,21 +1,21 @@
 # CHA3P07 Network Automation 2026
 
-Automated network monitoring, threat detection, incident response, DHCP device approval, and performance measurement using **pfSense, Python, n8n, Ansible, and Telegram**.
+Automated network monitoring, threat detection, incident response, DHCP device approval, and performance reporting using **pfSense, Python, n8n, Ansible, and Telegram**.
 
 ---
 
 ## 1. Overview
 
-This project implements a lab-scale network security automation system that collects pfSense logs, detects suspicious activity, automatically responds to security incidents, handles unknown DHCP devices through human approval, and records performance metrics for evaluation.
+This project implements a network automation and security orchestration system that collects logs from pfSense, analyzes network activity, detects suspicious behavior, triggers automated response workflows, manages new DHCP devices through administrator approval, and records system performance for evaluation.
 
-The system currently supports four main automation capabilities:
+The project focuses on four main capabilities:
 
-- **Port Scan Detection and Automatic IP Blocking**
-- **SSH / Connection-Flood Brute-Force Detection**
-- **Unknown DHCP Device Approval via Telegram**
-- **Performance Reporting for Automated Responses**
+- **Port Scan Detection and Automated Response**
+- **Brute-Force Detection and Automated Response**
+- **Unknown DHCP Device Approval**
+- **Automation Performance Reporting**
 
-The project is designed for academic and laboratory use in network automation, security orchestration, and automated incident response.
+The system is designed as a modular workflow-based architecture, where each component has a clear responsibility.
 
 ---
 
@@ -23,52 +23,49 @@ The project is designed for academic and laboratory use in network automation, s
 
 ```mermaid
 flowchart LR
-    A[pfSense] -->|Syslog UDP/514| B[pf_collector.py]
+    A[pfSense] -->|Syslog| B[Python Log Collector]
     B --> C[pfsense.log]
     C --> D[WF-ANALYZER]
 
-    D -->|PORT_SCAN| E[WF-BLOCK-SCAN]
-    D -->|BRUTE_FORCE| F[WF-BLOCK-BRUTE]
+    D -->|Port Scan| E[WF-BLOCK-SCAN]
+    D -->|Brute Force| F[WF-BLOCK-BRUTE]
     D -->|DHCP Events| G[WF-DHCP-WATCH]
 
-    E -->|POST /block-ip| H[Ansible API]
-    F -->|POST /block-ip| H
+    E --> H[Ansible API]
+    F --> H
     H --> I[pfSense]
 
     G --> J[Telegram Approval]
-    J -->|APPROVE / REJECT| K[WF-DHCP-CALLBACK]
-    K -->|APPROVE| L[POST /add-static-mapping]
-    L --> H
+    J -->|Approve / Reject| K[WF-DHCP-CALLBACK]
+    K --> H
 
-    E --> M[processing_metrics.jsonl]
-    F --> M
-    K --> M
+    E --> L[Metrics]
+    F --> L
+    K --> L
 
-    M --> N[WF-METRICS-REPORT]
-    N -->|/report| J
+    L --> M[WF-METRICS-REPORT]
+    M --> J
 ```
 
 ### High-Level Flow
 
 ```text
 pfSense
-   ↓ Syslog
-pf_collector.py
+   ↓
+Python Log Collector
    ↓
 pfsense.log
    ↓
 WF-ANALYZER
-   ├── PORT_SCAN ───→ WF-BLOCK-SCAN ───→ Ansible
-   ├── BRUTE_FORCE ─→ WF-BLOCK-BRUTE ──→ Ansible
+   ├── Port Scan ───→ WF-BLOCK-SCAN ───→ Ansible
+   ├── Brute Force ─→ WF-BLOCK-BRUTE ──→ Ansible
    └── DHCP ────────→ WF-DHCP-WATCH
                            ↓
                         Telegram
                            ↓
-                    APPROVE / REJECT
+                    Approve / Reject
                            ↓
                     WF-DHCP-CALLBACK
-                           ↓
-                         Ansible
 ```
 
 ---
@@ -77,74 +74,153 @@ WF-ANALYZER
 
 | Component | Role |
 |---|---|
-| **pfSense** | Firewall, DHCP service, and source of network logs |
-| **pf_collector.py** | Receives pfSense Syslog over UDP and stores logs |
-| **WF-ANALYZER** | Parses logs, detects threats, deduplicates incidents, and routes DHCP events |
-| **WF-BLOCK-SCAN** | Blocks IP addresses detected as port scanners |
-| **WF-BLOCK-BRUTE** | Blocks IP addresses detected as brute-force attackers |
-| **WF-DHCP-WATCH** | Detects previously unknown MAC addresses |
-| **WF-DHCP-CALLBACK** | Processes Telegram APPROVE / REJECT actions |
-| **Ansible API** | Applies firewall and DHCP configuration to pfSense |
-| **WF-METRICS-REPORT** | Builds automation performance reports and sends them to Telegram |
+| **pfSense** | Provides firewall, DHCP, and network log functions |
+| **Python Log Collector** | Receives and stores pfSense Syslog messages |
+| **WF-ANALYZER** | Analyzes logs, classifies events, performs deduplication, and routes workflows |
+| **WF-BLOCK-SCAN** | Handles automated response to detected port scans |
+| **WF-BLOCK-BRUTE** | Handles automated response to detected brute-force activity |
+| **WF-DHCP-WATCH** | Detects previously unknown DHCP devices |
+| **WF-DHCP-CALLBACK** | Processes administrator approval or rejection actions |
+| **Ansible API** | Applies network configuration changes to pfSense |
+| **WF-METRICS-REPORT** | Generates automation performance reports |
 
 ---
 
-## 4. Detection Rules
+## 4. Workflow Overview
 
-The current Analyzer uses the following thresholds:
+### WF-ANALYZER
 
-| Detection | Threshold | Window |
-|---|---:|---:|
-| SSH Brute Force | 5 failed authentication events | 60 seconds |
-| Connection Flood / Brute Force | 8 attempts to the same service | 60 seconds |
-| Port Scan | 15 distinct destination ports | 10 seconds |
+`WF-ANALYZER` is the central analysis workflow.
 
-### Detection Priority
+It reads collected pfSense logs and performs:
 
-For each source IP, the Analyzer evaluates events in the following order:
+- Network event parsing
+- Security event classification
+- Incident deduplication
+- Security event logging
+- Routing to response workflows
+- Routing of DHCP events
+
+The Analyzer is responsible for deciding which workflow should handle each detected event.
+
+---
+
+### WF-BLOCK-SCAN
+
+Handles IP addresses identified by the Analyzer as port-scan sources.
+
+Main flow:
 
 ```text
-SSH Brute Force
-        ↓
-Connection-Flood Brute Force
-        ↓
-Port Scan
+Detected Port Scan
+      ↓
+Read Security Event
+      ↓
+Check Duplicate State
+      ↓
+Call Ansible API
+      ↓
+Apply Firewall Response
+      ↓
+Record Metrics
+      ↓
+Send Notification
 ```
-
-The Analyzer is responsible for deciding whether an event is malicious. Downstream workflows only execute the corresponding automation action.
 
 ---
 
-## 5. Incident Deduplication
+### WF-BLOCK-BRUTE
 
-The project uses multiple deduplication layers to prevent the same incident from repeatedly triggering automation.
+Handles brute-force events detected by the Analyzer.
 
-### Analyzer-Level Dedupe
-
-Current incident quiet periods:
+Main flow:
 
 ```text
-PORT_SCAN    → 20 seconds
-BRUTE_FORCE  → 70 seconds
+Detected Brute Force
+      ↓
+Read Security Event
+      ↓
+Check Duplicate State
+      ↓
+Call Ansible API
+      ↓
+Apply Firewall Response
+      ↓
+Record Metrics
+      ↓
+Send Notification
 ```
-
-The Analyzer tracks incident state using n8n workflow static data.
-
-### Block Workflow Dedupe
-
-`WF-BLOCK-SCAN` and `WF-BLOCK-BRUTE` use:
-
-```javascript
-staticData.blocked
-```
-
-to prevent the same IP from being sent repeatedly to Ansible during consecutive polling cycles.
 
 ---
 
-## 6. DHCP Device Approval
+### WF-DHCP-WATCH
 
-Unknown DHCP devices are handled through a human-in-the-loop approval process.
+Receives DHCP events from the Analyzer and detects devices that are not already known by the system.
+
+The workflow checks device state against:
+
+```text
+approved_macs.txt
+pending_macs.txt
+rejected_macs.txt
+```
+
+Unknown devices are sent to Telegram for administrator approval.
+
+---
+
+### WF-DHCP-CALLBACK
+
+Processes administrator actions from Telegram.
+
+```text
+Unknown Device
+      ↓
+Telegram Approval Request
+      ↓
+Approve / Reject
+      ↓
+WF-DHCP-CALLBACK
+```
+
+If approved, the workflow requests the Ansible layer to create the required DHCP mapping and verifies the result.
+
+If rejected, the device is recorded so that it is not repeatedly submitted for approval.
+
+---
+
+### WF-METRICS-REPORT
+
+Collects automation results and generates performance reports.
+
+The report provides a high-level view of:
+
+- Successful and failed executions
+- Processing time statistics
+- Recent automation activity
+- Performance by automation scenario
+
+Reports can be requested through Telegram.
+
+---
+
+## 5. Detection and Response
+
+The system currently supports the following security scenarios:
+
+| Scenario | Detection Purpose | Automated Response |
+|---|---|---|
+| **Port Scan** | Detect multi-port scanning activity | Block the detected source through Ansible |
+| **Brute Force** | Detect repeated access or authentication attempts | Block the detected source through Ansible |
+| **Unknown DHCP Device** | Detect a device that has not been previously approved | Request administrator approval through Telegram |
+
+Detection thresholds and detailed analysis logic are maintained inside the Analyzer workflow and should be documented separately from the main README.
+
+---
+
+## 6. DHCP Approval Flow
+
+The DHCP workflow uses a human-in-the-loop model.
 
 ```text
 New DHCP Device
@@ -153,105 +229,38 @@ WF-ANALYZER
       ↓
 WF-DHCP-WATCH
       ↓
-Check approved / rejected / pending MAC lists
+Check Known Device Lists
       ↓
-Unknown MAC
+Unknown Device
       ↓
-Telegram Approval Request
-      ↓
-  ┌─────────────┐
-  │             │
-APPROVE       REJECT
-  │             │
-  ↓             ↓
-Choose IP   rejected_macs.txt
-  ↓
-Ansible /add-static-mapping
-  ↓
-pfSense DHCP Mapping
-  ↓
-Verify DHCPACK
-  ↓
-approved_macs.txt
+Telegram
+   ↙       ↘
+Approve   Reject
+   ↓         ↓
+Apply     Record
+Mapping   Rejection
+   ↓
+Verify DHCP Result
 ```
 
-The current approval IP pool is:
-
-```text
-192.168.12.11 - 192.168.12.199
-```
-
-Device state is stored in:
-
-```text
-approved_macs.txt
-pending_macs.txt
-rejected_macs.txt
-```
+This allows network access decisions for new devices to remain under administrator control while still automating the configuration process.
 
 ---
 
-## 7. Performance Metrics
+## 7. Performance Monitoring
 
-All automation scenarios write performance data to:
+The project records performance information for the main automation scenarios.
 
-```text
-C:/Users/Administrator/.n8n-files/metrics/processing_metrics.jsonl
-```
+Metrics are used to evaluate:
 
-Current scenarios:
+- How long automated responses take
+- Whether workflows complete successfully
+- General execution consistency
+- Recent system activity
 
-```text
-BLOCK_SCAN
-BLOCK_BRUTE
-APPROVE_MAC
-```
+Performance reports are available through the Telegram reporting workflow.
 
-For security automation:
-
-```text
-T0 = source_event_at_ms
-T1 = analyzer_detected_at_ms
-T2 = processing_finished_at_ms
-```
-
-Metrics can be interpreted as:
-
-```text
-Detection Delay       = T1 - T0
-Automation Response   = T2 - T1
-End-to-End Time       = T2 - T0
-```
-
-The current block workflows primarily measure:
-
-```text
-T2 - T1
-```
-
-For DHCP approval, reporting focuses on the automation period after the administrator selects **APPROVE**, so human reaction time does not distort system performance.
-
-### Telegram Reports
-
-Supported commands include:
-
-```text
-/report
-/report scan
-/report brute
-/report approve
-/report dhcp
-```
-
-Reports include:
-
-- Success rate
-- Average processing time
-- Median
-- Minimum
-- Maximum
-- P95
-- Latest processed event
+Detailed timestamp calculations and measurement methodology are documented separately.
 
 ---
 
@@ -272,43 +281,26 @@ CHA3P07-Network-Automation-2026/
     └── WF-METRICS-REPORT — Telegram Performance Report.json
 ```
 
-The current repository contains the Python collector and n8n workflow layer.
+The repository currently contains:
 
-The Ansible/API implementation used by these workflows runs separately and is not currently included in this repository.
+- Python Syslog Collector
+- n8n automation workflows
+
+The Ansible automation service is deployed separately.
 
 ---
 
-## 9. Runtime Files
+## 9. Runtime Data
 
-The current workflows expect runtime files under:
+The workflows use local runtime files for:
 
-```text
-C:/Users/Administrator/.n8n-files/
-```
+- Collected pfSense logs
+- Security event queues
+- Approved, pending, and rejected device lists
+- Performance metrics
+- Telegram polling state
 
-Recommended structure:
-
-```text
-.n8n-files/
-│
-├── pflogs/
-│   ├── pfsense.log
-│   ├── BanIP_Scanport.txt
-│   ├── BanIP_Bruteforce.txt
-│   ├── BanEvent_Scanport.jsonl
-│   ├── BanEvent_Bruteforce.jsonl
-│   ├── analyzer_events.log
-│   ├── approved_macs.txt
-│   ├── rejected_macs.txt
-│   ├── pending_macs.txt
-│   └── DeviceEvent_Approval.jsonl
-│
-├── metrics/
-│   └── processing_metrics.jsonl
-│
-└── telegram/
-    └── report_offset.txt
-```
+These files are stored outside the repository and are created or maintained by the running automation environment.
 
 ---
 
@@ -321,34 +313,19 @@ git clone https://github.com/minhhung8712/CHA3P07-Network-Automation-2026.git
 cd CHA3P07-Network-Automation-2026
 ```
 
-### 2. Configure the Collector
+### 2. Configure the Python Collector
 
-Review the following values in `pf_collector.py`:
-
-```python
-LISTEN_IP
-LISTEN_PORT
-PFSENSE_IP
-LOG_DIR
-ONLY_ACCEPT_FROM_PFSENSE
-```
-
-The default Syslog listener uses:
+Review the environment-specific values in:
 
 ```text
-UDP/514
+pf_collector.py
 ```
+
+Configure the Syslog listener and log storage location for the target environment.
 
 ### 3. Configure pfSense Remote Logging
 
-Send the required pfSense logs to the host running `pf_collector.py`.
-
-Example:
-
-```text
-Destination: <collector-ip>:514
-Protocol: UDP
-```
+Configure pfSense to forward the required logs to the host running the Python collector.
 
 ### 4. Start the Collector
 
@@ -356,15 +333,11 @@ Protocol: UDP
 python pf_collector.py
 ```
 
-Verify that:
-
-```text
-pfsense.log
-```
-
-is receiving pfSense messages.
+Verify that pfSense logs are being written successfully.
 
 ### 5. Import n8n Workflows
+
+Import the workflow JSON files into the same n8n instance.
 
 Recommended logical order:
 
@@ -377,67 +350,15 @@ Recommended logical order:
 6. WF-METRICS-REPORT
 ```
 
-After importing into another n8n instance, verify workflow IDs, credentials, file paths, and API addresses.
+After importing, review workflow references, credentials, file paths, and API configuration for the target environment.
 
 ---
 
-## 11. Lab-Specific Configuration
+## 11. Detailed Documentation
 
-The current project contains values specific to the laboratory environment, including:
+This README provides only a high-level overview of the system.
 
-```text
-pfSense:      192.168.10.1
-Ansible API:  192.168.10.3:8000
-DHCP Pool:    192.168.12.11 - 192.168.12.199
-```
-
-Internal network prefixes currently include:
-
-```text
-192.168.10.*
-192.168.11.*
-192.168.12.*
-192.168.20.*
-```
-
-These values must be reviewed before deployment in another environment.
-
----
-
-## 12. Security Notice
-
-This project is intended primarily for laboratory and academic use.
-
-Before using it in a production environment:
-
-- Disable or remove `LAB_RESET`
-- Move all secrets to n8n Credentials or environment variables
-- Rotate any credential that has previously been committed to Git
-- Restrict access to the Ansible API
-- Add authentication to automation API endpoints
-- Validate all IP and MAC input
-- Enable `ONLY_ACCEPT_FROM_PFSENSE`
-- Ensure Ansible playbooks are idempotent
-- Apply least-privilege filesystem permissions
-- Add structured retry and error handling
-
-> Never store Telegram Bot API tokens or other secrets directly in exported workflow JSON files.
-
----
-
-## 13. Known Repository Issue
-
-The current `WF-BLOCK-SCAN — Read Port-Scan Bans → Ansible.json` file contains two workflow JSON objects concatenated together.
-
-The older inactive workflow should be removed so that the file contains only one valid n8n workflow JSON document before importing it into another n8n instance.
-
----
-
-## 14. Documentation
-
-This README provides a high-level overview of the project.
-
-Detailed technical documentation can be separated into the following files:
+Detailed technical documentation should be maintained separately:
 
 ```text
 docs/
@@ -449,36 +370,7 @@ docs/
 └── security-notes.md
 ```
 
-These documents can cover internal workflow logic, timestamp correlation, deduplication behaviour, DHCP approval flow, deployment steps, and production-hardening recommendations in greater detail.
-
----
-
-## 15. Project Scope
-
-This project demonstrates practical concepts in:
-
-- Network Automation
-- Security Orchestration
-- Automated Incident Response
-- pfSense Integration
-- n8n Workflow Automation
-- Ansible Automation
-- Network Performance Measurement
-- Human-in-the-Loop Security Decisions
-
-The overall design moves from:
-
-```text
-Manual Detection → Manual Response
-```
-
-toward:
-
-```text
-Collect → Detect → Decide → Automate → Verify → Measure
-```
-
-while keeping human approval for network-access decisions where appropriate.
+These documents can describe internal workflow logic, detection rules, deduplication behavior, DHCP processing, performance measurement, deployment, and operational considerations.
 
 ---
 
